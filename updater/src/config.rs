@@ -14,6 +14,7 @@ pub struct RuntimeConfig {
     pub notifications: bool,
     pub workspace_root: PathBuf,
     pub builder_bundle_root: PathBuf,
+    pub app_executable_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,7 @@ impl RuntimeConfig {
             notifications: true,
             workspace_root: paths.cache_dir.clone(),
             builder_bundle_root,
+            app_executable_path: PathBuf::from("/opt/codex-desktop/electron"),
         }
     }
 
@@ -145,6 +147,7 @@ auto_install_on_app_exit = false
 notifications = false
 workspace_root = "/tmp/codex-workspaces"
 builder_bundle_root = "/tmp/codex-builder"
+app_executable_path = "/opt/codex-desktop/electron"
 "#,
         )?;
 
@@ -156,6 +159,10 @@ builder_bundle_root = "/tmp/codex-builder"
         assert!(!config.notifications);
         assert_eq!(config.workspace_root, PathBuf::from("/tmp/codex-workspaces"));
         assert_eq!(config.builder_bundle_root, PathBuf::from("/tmp/codex-builder"));
+        assert_eq!(
+            config.app_executable_path,
+            PathBuf::from("/opt/codex-desktop/electron")
+        );
         Ok(())
     }
 }

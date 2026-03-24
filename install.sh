@@ -238,8 +238,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WEBVIEW_DIR="$SCRIPT_DIR/content/webview"
 LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop"
 LOG_FILE="$LOG_DIR/launcher.log"
+APP_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/codex-desktop"
+APP_PID_FILE="$APP_STATE_DIR/app.pid"
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$APP_STATE_DIR"
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date -Is)] Starting Codex Desktop launcher"
@@ -285,6 +287,40 @@ notify_error() {
     fi
 }
 
+clear_stale_pid_file() {
+    if [ ! -f "$APP_PID_FILE" ]; then
+        return 0
+    fi
+
+    local pid=""
+    pid="$(cat "$APP_PID_FILE" 2>/dev/null || true)"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$APP_PID_FILE"
+    fi
+}
+
+ensure_update_manager_service() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ]; then
+        return 0
+    fi
+
+    if ! systemctl --user show-environment >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if systemctl --user is-enabled codex-update-manager.service >/dev/null 2>&1; then
+        systemctl --user start codex-update-manager.service >/dev/null 2>&1 || true
+    else
+        systemctl --user enable --now codex-update-manager.service >/dev/null 2>&1 || true
+    fi
+}
+
+clear_stale_pid_file
+ensure_update_manager_service
 pkill -f "http.server 5175" 2>/dev/null || true
 sleep 0.3
 
@@ -308,6 +344,7 @@ fi
 echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH"
 
 cd "$SCRIPT_DIR"
+echo "$$" > "$APP_PID_FILE"
 exec "$SCRIPT_DIR/electron" --no-sandbox --class=codex-desktop "$@"
 SCRIPT
 

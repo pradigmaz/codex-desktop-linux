@@ -64,6 +64,11 @@ pub async fn build_update(
             .env("PACKAGE_VERSION", candidate_version)
             .env("APP_DIR_OVERRIDE", &app_dir)
             .env("DIST_DIR_OVERRIDE", &dist_dir)
+            .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
+            .env(
+                "UPDATER_SERVICE_SOURCE",
+                bundle_dir.join("packaging/linux/codex-update-manager.service"),
+            )
             .current_dir(&bundle_dir),
         &build_log,
     )
@@ -199,6 +204,10 @@ mod tests {
             "[Desktop Entry]",
         )?;
         fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.service"),
+            "[Unit]\nDescription=Codex Update Manager\n",
+        )?;
+        fs::write(
             bundle_root.join("install.sh"),
             r#"#!/bin/bash
 set -euo pipefail
@@ -253,6 +262,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
             notifications: true,
             workspace_root: cache_root,
             builder_bundle_root: bundle_root,
+            app_executable_path: PathBuf::from("/opt/codex-desktop/electron"),
         };
         let dmg_path = temp.path().join("Codex.dmg");
         fs::write(&dmg_path, b"dmg")?;
