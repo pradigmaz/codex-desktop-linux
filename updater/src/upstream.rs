@@ -1,3 +1,5 @@
+//! Upstream DMG metadata and download helpers.
+
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -7,6 +9,7 @@ use std::path::{Path, PathBuf};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Selected HTTP metadata used to detect upstream DMG changes.
 pub struct RemoteMetadata {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
@@ -15,12 +18,14 @@ pub struct RemoteMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Result of downloading the current upstream DMG snapshot.
 pub struct DownloadedDmg {
     pub path: PathBuf,
     pub sha256: String,
     pub candidate_version: String,
 }
 
+/// Fetches the upstream DMG headers used to detect candidate updates.
 pub async fn fetch_remote_metadata(client: &Client, dmg_url: &str) -> Result<RemoteMetadata> {
     let response = client
         .head(dmg_url)
@@ -64,6 +69,7 @@ pub async fn fetch_remote_metadata(client: &Client, dmg_url: &str) -> Result<Rem
     })
 }
 
+/// Downloads the upstream DMG and derives a package version from its hash.
 pub async fn download_dmg(
     client: &Client,
     dmg_url: &str,
@@ -112,6 +118,7 @@ pub async fn download_dmg(
     })
 }
 
+/// Derives a local package version from the DMG hash and download timestamp.
 pub fn derive_candidate_version(sha256: &str, timestamp: DateTime<Utc>) -> Result<String> {
     let short_hash = sha256
         .get(0..8)
@@ -149,7 +156,8 @@ mod tests {
             .await;
 
         let client = Client::builder().build()?;
-        let metadata = fetch_remote_metadata(&client, &format!("{}/Codex.dmg", server.uri())).await?;
+        let metadata =
+            fetch_remote_metadata(&client, &format!("{}/Codex.dmg", server.uri())).await?;
         assert_eq!(metadata.etag.as_deref(), Some("\"abc\""));
         assert_eq!(
             metadata.last_modified.as_deref(),
@@ -187,5 +195,11 @@ mod tests {
         );
         assert_eq!(downloaded.candidate_version, "2026.03.24.120000+678cd508");
         Ok(())
+    }
+
+    #[test]
+    fn derive_candidate_version_rejects_short_hashes() {
+        let error = derive_candidate_version("short", Utc::now()).expect_err("hash should fail");
+        assert!(error.to_string().contains("sha256 is too short"));
     }
 }

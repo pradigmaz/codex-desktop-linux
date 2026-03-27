@@ -1,3 +1,5 @@
+//! Persisted updater state and compatibility with older on-disk formats.
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -5,6 +7,7 @@ use std::{collections::BTreeSet, fs, path::Path, path::PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// High-level lifecycle states for the local updater daemon.
 pub enum UpdateStatus {
     Idle,
     CheckingUpstream,
@@ -25,6 +28,7 @@ pub enum UpdateStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// Artifact paths tracked across update checks, rebuilds, and installation.
 pub struct ArtifactPaths {
     pub dmg_path: Option<PathBuf>,
     pub workspace_dir: Option<PathBuf>,
@@ -36,6 +40,7 @@ pub struct ArtifactPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Full updater state stored on disk between daemon runs.
 pub struct PersistedState {
     pub installed_version: String,
     pub candidate_version: Option<String>,
@@ -51,6 +56,7 @@ pub struct PersistedState {
 }
 
 impl PersistedState {
+    /// Creates a new default state using the selected auto-install preference.
     pub fn new(auto_install_on_app_exit: bool) -> Self {
         Self {
             installed_version: "unknown".to_string(),
@@ -67,6 +73,7 @@ impl PersistedState {
         }
     }
 
+    /// Loads state from disk or returns a new default state if the file is missing.
     pub fn load_or_default(path: &Path, auto_install_on_app_exit: bool) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::new(auto_install_on_app_exit));
@@ -79,12 +86,14 @@ impl PersistedState {
         Ok(state)
     }
 
+    /// Persists the updater state to JSON on disk.
     pub fn save(&self, path: &Path) -> Result<()> {
         let content = serde_json::to_string_pretty(self)?;
         fs::write(path, content).with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(())
     }
 
+    /// Marks the state as failed while preserving any useful recovery metadata.
     pub fn mark_failed(&mut self, message: impl Into<String>) {
         self.status = UpdateStatus::Failed;
         self.error_message = Some(message.into());

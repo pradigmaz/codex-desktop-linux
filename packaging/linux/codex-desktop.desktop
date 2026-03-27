@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=Codex Desktop
 Comment=Run Codex Desktop on Linux
-Exec=/usr/bin/codex-desktop
+Exec=env BAMF_DESKTOP_FILE_HINT=/usr/share/applications/codex-desktop.desktop CHROME_DESKTOP=codex-desktop.desktop /usr/bin/codex-desktop
 Icon=codex-desktop
 Terminal=false
 Type=Application
 Categories=Development;
 StartupNotify=true
-StartupWMClass=codex-desktop
+StartupWMClass=Codex
+X-GNOME-WMClass=Codex

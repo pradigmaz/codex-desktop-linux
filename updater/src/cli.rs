@@ -1,3 +1,5 @@
+//! Command-line interface definition for the updater binary.
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -10,6 +12,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+/// Top-level commands supported by the updater binary.
 pub enum Commands {
     Daemon,
     CheckNow,

@@ -1,3 +1,5 @@
+//! Binary entrypoint for the local Codex Desktop update manager.
+
 mod app;
 mod builder;
 mod cli;

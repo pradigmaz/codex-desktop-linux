@@ -1,3 +1,5 @@
+//! Runtime configuration loading and XDG path discovery for the updater.
+
 use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
@@ -6,6 +8,7 @@ use std::{fs, path::PathBuf};
 const SERVICE_NAME: &str = "codex-update-manager";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Runtime configuration values that control how the updater behaves on Linux.
 pub struct RuntimeConfig {
     pub dmg_url: String,
     pub initial_check_delay_seconds: u64,
@@ -18,6 +21,7 @@ pub struct RuntimeConfig {
 }
 
 #[derive(Debug, Clone)]
+/// Resolved XDG filesystem locations used by the updater at runtime.
 pub struct RuntimePaths {
     pub config_file: PathBuf,
     pub state_file: PathBuf,
@@ -28,6 +32,7 @@ pub struct RuntimePaths {
 }
 
 impl RuntimePaths {
+    /// Resolves updater paths from the current user's XDG base directories.
     pub fn from_base_dirs(base_dirs: &BaseDirs) -> Self {
         let config_dir = base_dirs.config_dir().join(SERVICE_NAME);
         let state_root = base_dirs
@@ -46,11 +51,13 @@ impl RuntimePaths {
         }
     }
 
+    /// Detects updater paths for the current machine.
     pub fn detect() -> Result<Self> {
         let base_dirs = BaseDirs::new().context("Could not resolve XDG base directories")?;
         Ok(Self::from_base_dirs(&base_dirs))
     }
 
+    /// Creates the runtime directories needed by the updater.
     pub fn ensure_dirs(&self) -> Result<()> {
         fs::create_dir_all(&self.config_dir)
             .with_context(|| format!("Failed to create {}", self.config_dir.display()))?;
@@ -63,6 +70,7 @@ impl RuntimePaths {
 }
 
 impl RuntimeConfig {
+    /// Builds the default runtime configuration for the resolved paths.
     pub fn default_with_paths(paths: &RuntimePaths) -> Self {
         let packaged_bundle_root = PathBuf::from("/opt/codex-desktop/update-builder");
         let builder_bundle_root = if packaged_bundle_root.exists() {
@@ -86,6 +94,7 @@ impl RuntimeConfig {
         }
     }
 
+    /// Loads the runtime configuration from disk, or returns defaults if missing.
     pub fn load_or_default(paths: &RuntimePaths) -> Result<Self> {
         if !paths.config_file.exists() {
             return Ok(Self::default_with_paths(paths));
@@ -157,8 +166,14 @@ app_executable_path = "/opt/codex-desktop/electron"
         assert_eq!(config.check_interval_hours, 12);
         assert!(!config.auto_install_on_app_exit);
         assert!(!config.notifications);
-        assert_eq!(config.workspace_root, PathBuf::from("/tmp/codex-workspaces"));
-        assert_eq!(config.builder_bundle_root, PathBuf::from("/tmp/codex-builder"));
+        assert_eq!(
+            config.workspace_root,
+            PathBuf::from("/tmp/codex-workspaces")
+        );
+        assert_eq!(
+            config.builder_bundle_root,
+            PathBuf::from("/tmp/codex-builder")
+        );
         assert_eq!(
             config.app_executable_path,
             PathBuf::from("/opt/codex-desktop/electron")

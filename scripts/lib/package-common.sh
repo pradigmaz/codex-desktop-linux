@@ -1,0 +1,95 @@
+#!/bin/bash
+
+info() {
+    echo "[INFO] $*" >&2
+}
+
+error() {
+    echo "[ERROR] $*" >&2
+    exit 1
+}
+
+ensure_file_exists() {
+    local path="$1"
+    local label="$2"
+    [ -f "$path" ] || error "Missing $label: $path"
+}
+
+ensure_app_layout() {
+    [ -d "$APP_DIR" ] || error "Missing app directory: $APP_DIR. Run ./install.sh first."
+    [ -x "$APP_DIR/start.sh" ] || error "Missing launcher: $APP_DIR/start.sh"
+}
+
+ensure_updater_binary() {
+    if [ -x "$UPDATER_BINARY_SOURCE" ]; then
+        return
+    fi
+
+    [ -f "$REPO_DIR/Cargo.toml" ] || error "Missing updater binary: $UPDATER_BINARY_SOURCE"
+    command -v cargo >/dev/null 2>&1 || error "cargo is required to build codex-update-manager.
+Install the Rust toolchain:
+  bash scripts/install-deps.sh        # auto-installs via rustup
+  # or manually: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+
+    info "Building codex-update-manager release binary"
+    cargo build --release -p codex-update-manager >&2
+    [ -x "$UPDATER_BINARY_SOURCE" ] || error "Failed to build updater binary: $UPDATER_BINARY_SOURCE"
+}
+
+stage_common_package_files() {
+    local root="$1"
+    local app_root="$root/opt/$PACKAGE_NAME"
+
+    mkdir -p \
+        "$root/opt" \
+        "$root/usr/bin" \
+        "$root/usr/lib/systemd/user" \
+        "$root/usr/share/applications" \
+        "$root/usr/share/icons/hicolor/256x256/apps"
+
+    rm -rf "$app_root"
+    cp -aT "$APP_DIR" "$app_root"
+    mkdir -p "$app_root/.codex-linux"
+    cp "$DESKTOP_TEMPLATE" "$root/usr/share/applications/$PACKAGE_NAME.desktop"
+    cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
+    cp "$UPDATER_BINARY_SOURCE" "$root/usr/bin/codex-update-manager"
+    chmod 0755 "$root/usr/bin/codex-update-manager"
+    cp "$UPDATER_SERVICE_SOURCE" "$root/usr/lib/systemd/user/codex-update-manager.service"
+    chmod 0644 "$root/usr/lib/systemd/user/codex-update-manager.service"
+    cp "$PACKAGED_RUNTIME_SOURCE" "$app_root/.codex-linux/codex-packaged-runtime.sh"
+    chmod 0644 "$app_root/.codex-linux/codex-packaged-runtime.sh"
+}
+
+stage_update_builder_bundle() {
+    local root="$1"
+    local update_builder_root="$root/opt/$PACKAGE_NAME/update-builder"
+
+    mkdir -p \
+        "$update_builder_root/scripts" \
+        "$update_builder_root/scripts/lib" \
+        "$update_builder_root/packaging/linux" \
+        "$update_builder_root/assets"
+
+    cp "$REPO_DIR/install.sh" "$update_builder_root/install.sh"
+    cp "$REPO_DIR/scripts/build-deb.sh" "$update_builder_root/scripts/build-deb.sh"
+    cp "$REPO_DIR/scripts/build-rpm.sh" "$update_builder_root/scripts/build-rpm.sh"
+    cp "$REPO_DIR/scripts/lib/package-common.sh" "$update_builder_root/scripts/lib/package-common.sh"
+    cp "$REPO_DIR/packaging/linux/control" "$update_builder_root/packaging/linux/control"
+    cp "$REPO_DIR/packaging/linux/codex-desktop.spec" "$update_builder_root/packaging/linux/codex-desktop.spec"
+    cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"
+    cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
+    cp "$UPDATER_SERVICE_SOURCE" "$update_builder_root/packaging/linux/codex-update-manager.service"
+    cp "$REPO_DIR/packaging/linux/codex-update-manager.prerm" "$update_builder_root/packaging/linux/codex-update-manager.prerm"
+    cp "$REPO_DIR/packaging/linux/codex-update-manager.postrm" "$update_builder_root/packaging/linux/codex-update-manager.postrm"
+    cp "$REPO_DIR/assets/codex.png" "$update_builder_root/assets/codex.png"
+}
+
+write_launcher_stub() {
+    local root="$1"
+
+    cat > "$root/usr/bin/$PACKAGE_NAME" <<SCRIPT
+#!/bin/bash
+exec /opt/$PACKAGE_NAME/start.sh "\$@"
+SCRIPT
+    chmod 0755 "$root/usr/bin/$PACKAGE_NAME"
+}

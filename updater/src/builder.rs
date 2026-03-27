@@ -1,3 +1,5 @@
+//! Rebuilds native Linux packages from a downloaded upstream DMG.
+
 use crate::{
     config::{RuntimeConfig, RuntimePaths},
     install::PackageKind,
@@ -12,12 +14,23 @@ use std::{
 use tokio::process::Command;
 use tracing::info;
 
+const REQUIRED_BUNDLE_FILES: [(&str, &str); 5] = [
+    ("install.sh", "install.sh"),
+    ("scripts/build-deb.sh", "scripts/build-deb.sh"),
+    ("scripts/lib/package-common.sh", "scripts/lib/package-common.sh"),
+    ("packaging/linux", "packaging/linux"),
+    ("assets/codex.png", "assets/codex.png"),
+];
+const OPTIONAL_BUNDLE_FILES: [(&str, &str); 1] = [("scripts/build-rpm.sh", "scripts/build-rpm.sh")];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Paths to the temporary workspace and generated package produced by a rebuild.
 pub struct BuildArtifacts {
     pub workspace_dir: PathBuf,
     pub package_path: PathBuf,
 }
 
+/// Rebuilds a Linux package from the downloaded upstream DMG.
 pub async fn build_update(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -25,39 +38,24 @@ pub async fn build_update(
     candidate_version: &str,
     dmg_path: &Path,
 ) -> Result<BuildArtifacts> {
-    let workspace_dir = config.workspace_root.join("workspaces").join(candidate_version);
-    let bundle_dir = workspace_dir.join("builder");
-    let dist_dir = workspace_dir.join("dist");
-    let app_dir = workspace_dir.join("codex-app");
-    let logs_dir = workspace_dir.join("logs");
-    let install_log = logs_dir.join("install.log");
-    let build_log = logs_dir.join("build-package.log");
-
-    if workspace_dir.exists() {
-        fs::remove_dir_all(&workspace_dir)
-            .with_context(|| format!("Failed to remove {}", workspace_dir.display()))?;
-    }
-
-    fs::create_dir_all(&logs_dir)
-        .with_context(|| format!("Failed to create {}", logs_dir.display()))?;
-
+    let workspace = BuilderWorkspace::prepare(&config.workspace_root, candidate_version)?;
     let build_path = build_command_path();
 
     state.status = UpdateStatus::PreparingWorkspace;
-    state.artifact_paths.workspace_dir = Some(workspace_dir.clone());
+    state.artifact_paths.workspace_dir = Some(workspace.workspace_dir.clone());
     state.save(&paths.state_file)?;
 
-    copy_builder_bundle(&config.builder_bundle_root, &bundle_dir)?;
+    copy_builder_bundle(&config.builder_bundle_root, &workspace.bundle_dir)?;
 
     state.status = UpdateStatus::PatchingApp;
     state.save(&paths.state_file)?;
     run_and_log(
-        Command::new(bundle_dir.join("install.sh"))
+        Command::new(workspace.bundle_dir.join("install.sh"))
             .arg(dmg_path)
-            .env("CODEX_INSTALL_DIR", &app_dir)
+            .env("CODEX_INSTALL_DIR", &workspace.app_dir)
             .env("PATH", &build_path)
-            .current_dir(&bundle_dir),
-        &install_log,
+            .current_dir(&workspace.bundle_dir),
+        &workspace.install_log,
     )
     .await
     .context("install.sh failed during local rebuild")?;
@@ -65,38 +63,79 @@ pub async fn build_update(
     state.status = UpdateStatus::BuildingPackage;
     state.save(&paths.state_file)?;
 
-    let build_script = package_build_script(&bundle_dir);
+    let build_script = package_build_script(&workspace.bundle_dir);
     run_and_log(
         Command::new(&build_script)
             .env("PACKAGE_VERSION", candidate_version)
-            .env("APP_DIR_OVERRIDE", &app_dir)
-            .env("DIST_DIR_OVERRIDE", &dist_dir)
+            .env("APP_DIR_OVERRIDE", &workspace.app_dir)
+            .env("DIST_DIR_OVERRIDE", &workspace.dist_dir)
             .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
             .env(
                 "UPDATER_SERVICE_SOURCE",
-                bundle_dir.join("packaging/linux/codex-update-manager.service"),
+                workspace
+                    .bundle_dir
+                    .join("packaging/linux/codex-update-manager.service"),
             )
             .env("PATH", &build_path)
-            .current_dir(&bundle_dir),
-        &build_log,
+            .current_dir(&workspace.bundle_dir),
+        &workspace.build_log,
     )
     .await
     .with_context(|| format!("{} failed during local rebuild", build_script.display()))?;
 
-    let package_path = find_package_in(&dist_dir)?;
+    let package_path = find_package_in(&workspace.dist_dir)?;
     state.status = UpdateStatus::ReadyToInstall;
     state.artifact_paths = ArtifactPaths {
         dmg_path: Some(dmg_path.to_path_buf()),
-        workspace_dir: Some(workspace_dir.clone()),
+        workspace_dir: Some(workspace.workspace_dir.clone()),
         package_path: Some(package_path.clone()),
     };
     state.save(&paths.state_file)?;
     info!(candidate_version, package = %package_path.display(), "local update build ready");
 
     Ok(BuildArtifacts {
-        workspace_dir,
+        workspace_dir: workspace.workspace_dir,
         package_path,
     })
+}
+
+#[derive(Debug, Clone)]
+struct BuilderWorkspace {
+    workspace_dir: PathBuf,
+    bundle_dir: PathBuf,
+    dist_dir: PathBuf,
+    app_dir: PathBuf,
+    install_log: PathBuf,
+    build_log: PathBuf,
+}
+
+impl BuilderWorkspace {
+    fn prepare(workspace_root: &Path, candidate_version: &str) -> Result<Self> {
+        let workspace_dir = workspace_root.join("workspaces").join(candidate_version);
+        let bundle_dir = workspace_dir.join("builder");
+        let dist_dir = workspace_dir.join("dist");
+        let app_dir = workspace_dir.join("codex-app");
+        let logs_dir = workspace_dir.join("logs");
+        let install_log = logs_dir.join("install.log");
+        let build_log = logs_dir.join("build-package.log");
+
+        if workspace_dir.exists() {
+            fs::remove_dir_all(&workspace_dir)
+                .with_context(|| format!("Failed to remove {}", workspace_dir.display()))?;
+        }
+
+        fs::create_dir_all(&logs_dir)
+            .with_context(|| format!("Failed to create {}", logs_dir.display()))?;
+
+        Ok(Self {
+            workspace_dir,
+            bundle_dir,
+            dist_dir,
+            app_dir,
+            install_log,
+            build_log,
+        })
+    }
 }
 
 /// Returns the path to the native-package build script appropriate for the running system.
@@ -108,28 +147,42 @@ fn package_build_script(bundle_dir: &Path) -> PathBuf {
 }
 
 fn copy_builder_bundle(source_root: &Path, destination_root: &Path) -> Result<()> {
-    copy_path(&source_root.join("install.sh"), &destination_root.join("install.sh"))?;
-    copy_path(
-        &source_root.join("scripts/build-deb.sh"),
-        &destination_root.join("scripts/build-deb.sh"),
-    )?;
-    // RPM build script is optional; present when the bundle was built on (or
-    // prepared for) a Fedora/RPM-based system.
-    let rpm_script_src = source_root.join("scripts/build-rpm.sh");
-    if rpm_script_src.exists() {
-        copy_path(
-            &rpm_script_src,
-            &destination_root.join("scripts/build-rpm.sh"),
+    for (source, destination) in REQUIRED_BUNDLE_FILES {
+        copy_entry(
+            &source_root.join(source),
+            &destination_root.join(destination),
+            false,
         )?;
     }
-    copy_dir_recursive(
-        &source_root.join("packaging/linux"),
-        &destination_root.join("packaging/linux"),
-    )?;
-    copy_path(
-        &source_root.join("assets/codex.png"),
-        &destination_root.join("assets/codex.png"),
-    )?;
+
+    for (source, destination) in OPTIONAL_BUNDLE_FILES {
+        copy_entry(
+            &source_root.join(source),
+            &destination_root.join(destination),
+            true,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn copy_entry(source: &Path, destination: &Path, optional: bool) -> Result<()> {
+    if !source.exists() {
+        if optional {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "Required builder bundle path is missing: {}",
+            source.display()
+        );
+    }
+
+    if source.is_dir() {
+        copy_dir_recursive(source, destination)?;
+    } else {
+        copy_path(source, destination)?;
+    }
+
     Ok(())
 }
 
@@ -137,12 +190,16 @@ fn copy_path(source: &Path, destination: &Path) -> Result<()> {
     let parent = destination
         .parent()
         .context("Destination path has no parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("Failed to create {}", parent.display()))?;
-    fs::copy(source, destination)
-        .with_context(|| format!("Failed to copy {} to {}", source.display(), destination.display()))?;
-    let metadata = fs::metadata(source)
-        .with_context(|| format!("Failed to stat {}", source.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
+    fs::copy(source, destination).with_context(|| {
+        format!(
+            "Failed to copy {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    let metadata =
+        fs::metadata(source).with_context(|| format!("Failed to stat {}", source.display()))?;
     fs::set_permissions(destination, metadata.permissions())
         .with_context(|| format!("Failed to set permissions on {}", destination.display()))?;
     Ok(())
@@ -152,8 +209,8 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination)
         .with_context(|| format!("Failed to create {}", destination.display()))?;
 
-    for entry in fs::read_dir(source)
-        .with_context(|| format!("Failed to read {}", source.display()))?
+    for entry in
+        fs::read_dir(source).with_context(|| format!("Failed to read {}", source.display()))?
     {
         let entry = entry?;
         let entry_path = entry.path();
@@ -171,8 +228,8 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
 
 /// Find a native package file (.deb or .rpm) inside `dist_dir`.
 fn find_package_in(dist_dir: &Path) -> Result<PathBuf> {
-    for entry in fs::read_dir(dist_dir)
-        .with_context(|| format!("Failed to read {}", dist_dir.display()))?
+    for entry in
+        fs::read_dir(dist_dir).with_context(|| format!("Failed to read {}", dist_dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();
@@ -301,11 +358,14 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
         let bundle_root = temp.path().join("bundle");
         let state_root = temp.path().join("state");
         let cache_root = temp.path().join("cache");
-        fs::create_dir_all(bundle_root.join("scripts"))?;
+        fs::create_dir_all(bundle_root.join("scripts/lib"))?;
         fs::create_dir_all(bundle_root.join("packaging/linux"))?;
         fs::create_dir_all(bundle_root.join("assets"))?;
         fs::write(bundle_root.join("assets/codex.png"), b"png")?;
-        fs::write(bundle_root.join("packaging/linux/control"), "Package: codex")?;
+        fs::write(
+            bundle_root.join("packaging/linux/control"),
+            "Package: codex",
+        )?;
         fs::write(
             bundle_root.join("packaging/linux/codex-desktop.spec"),
             "Name: codex",
@@ -339,6 +399,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         // Provide both build scripts so the test works on both Debian and Fedora.
         write_fake_build_script(&bundle_root.join("scripts/build-deb.sh"), true)?;
         write_fake_build_script(&bundle_root.join("scripts/build-rpm.sh"), false)?;
+        fs::write(
+            bundle_root.join("scripts/lib/package-common.sh"),
+            b"#!/bin/bash\n",
+        )?;
 
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -364,8 +428,14 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         fs::write(&dmg_path, b"dmg")?;
 
         let mut state = PersistedState::new(true);
-        let artifacts =
-            build_update(&config, &mut state, &paths, "2026.03.24+abcd1234", &dmg_path).await?;
+        let artifacts = build_update(
+            &config,
+            &mut state,
+            &paths,
+            "2026.03.24+abcd1234",
+            &dmg_path,
+        )
+        .await?;
         assert_eq!(state.status, UpdateStatus::ReadyToInstall);
         assert!(artifacts.workspace_dir.exists());
         assert!(artifacts.package_path.exists());
@@ -379,6 +449,48 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             ext == "deb" || ext == "rpm",
             "expected .deb or .rpm, got .{ext}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn bundle_copy_skips_missing_optional_rpm_script() -> Result<()> {
+        let temp = tempdir()?;
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("destination");
+
+        fs::create_dir_all(source_root.join("scripts/lib"))?;
+        fs::create_dir_all(source_root.join("packaging/linux"))?;
+        fs::create_dir_all(source_root.join("assets"))?;
+        fs::write(source_root.join("install.sh"), b"#!/bin/bash\n")?;
+        fs::write(source_root.join("scripts/build-deb.sh"), b"#!/bin/bash\n")?;
+        fs::write(
+            source_root.join("scripts/lib/package-common.sh"),
+            b"#!/bin/bash\n",
+        )?;
+        fs::write(
+            source_root.join("packaging/linux/control"),
+            b"Package: codex\n",
+        )?;
+        fs::write(
+            source_root.join("packaging/linux/codex-update-manager.service"),
+            b"[Unit]\nDescription=Codex Update Manager\n",
+        )?;
+        fs::write(source_root.join("assets/codex.png"), b"png")?;
+
+        copy_builder_bundle(&source_root, &destination_root)?;
+
+        assert!(destination_root.join("scripts/build-deb.sh").exists());
+        assert!(!destination_root.join("scripts/build-rpm.sh").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn returns_error_when_dist_has_no_native_package() -> Result<()> {
+        let temp = tempdir()?;
+        fs::write(temp.path().join("README.txt"), b"no packages here")?;
+
+        let error = find_package_in(temp.path()).expect_err("package discovery should fail");
+        assert!(error.to_string().contains("No .deb or .rpm package found"));
         Ok(())
     }
 

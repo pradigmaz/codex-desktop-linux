@@ -21,6 +21,20 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+dependency_help() {
+    cat <<'EOF'
+Run the helper to install them automatically:
+  bash scripts/install-deps.sh
+
+Or install manually:
+  sudo apt install nodejs npm python3 p7zip-full curl unzip build-essential         # Debian/Ubuntu
+  sudo dnf install nodejs npm python3 7zip curl unzip @development-tools            # Fedora 41+ (dnf5)
+  sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip                # Fedora <41 (dnf)
+    && sudo dnf groupinstall 'Development Tools'
+  sudo pacman -S nodejs npm python p7zip curl unzip base-devel                      # Arch
+EOF
+}
+
 cleanup() {
     rm -rf "$WORK_DIR"
 }
@@ -35,15 +49,7 @@ check_deps() {
     done
     if [ ${#missing[@]} -ne 0 ]; then
         error "Missing dependencies: ${missing[*]}
-Run the helper to install them automatically:
-  bash scripts/install-deps.sh
-
-Or install manually:
-  sudo apt install nodejs npm python3 p7zip-full curl unzip build-essential         # Debian/Ubuntu
-  sudo dnf install nodejs npm python3 7zip curl unzip @development-tools            # Fedora 41+ (dnf5)
-  sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip                # Fedora <41 (dnf)
-    && sudo dnf groupinstall 'Development Tools'
-  sudo pacman -S nodejs npm python p7zip curl unzip base-devel                      # Arch"
+$(dependency_help)"
     fi
 
     NODE_MAJOR=$(node -v | cut -d. -f1 | tr -d v)
@@ -53,11 +59,7 @@ Or install manually:
 
     if ! command -v make &>/dev/null || ! command -v g++ &>/dev/null; then
         error "Build tools (make, g++) required:
-  bash scripts/install-deps.sh                                          # auto-detect
-  sudo apt install build-essential                                       # Debian/Ubuntu
-  sudo dnf install @development-tools                                    # Fedora 41+ (dnf5)
-  sudo dnf groupinstall 'Development Tools'                              # Fedora <41 (dnf)
-  sudo pacman -S base-devel                                              # Arch"
+$(dependency_help)"
     fi
 
     info "All dependencies found"
@@ -247,11 +249,31 @@ LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop"
 LOG_FILE="$LOG_DIR/launcher.log"
 APP_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/codex-desktop"
 APP_PID_FILE="$APP_STATE_DIR/app.pid"
+PACKAGED_RUNTIME_HELPER="$SCRIPT_DIR/.codex-linux/codex-packaged-runtime.sh"
 
 mkdir -p "$LOG_DIR" "$APP_STATE_DIR"
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date -Is)] Starting Codex Desktop launcher"
+
+load_packaged_runtime_helper() {
+    if [ -f "$PACKAGED_RUNTIME_HELPER" ]; then
+        # shellcheck disable=SC1090
+        . "$PACKAGED_RUNTIME_HELPER"
+    fi
+}
+
+run_packaged_runtime_prelaunch() {
+    if declare -F codex_packaged_runtime_prelaunch >/dev/null 2>&1; then
+        codex_packaged_runtime_prelaunch
+    fi
+}
+
+export_packaged_runtime_env() {
+    if declare -F codex_packaged_runtime_export_env >/dev/null 2>&1; then
+        codex_packaged_runtime_export_env
+    fi
+}
 
 find_codex_cli() {
     if command -v codex >/dev/null 2>&1; then
@@ -294,6 +316,21 @@ notify_error() {
     fi
 }
 
+wait_for_webview_server() {
+    echo "Waiting for webview server on :5175"
+
+    local attempt
+    for attempt in $(seq 1 50); do
+        if python3 -c "import socket; s=socket.socket(); s.settimeout(0.5); s.connect(('127.0.0.1', 5175)); s.close()" 2>/dev/null; then
+            echo "Webview server is ready"
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    return 1
+}
+
 clear_stale_pid_file() {
     if [ ! -f "$APP_PID_FILE" ]; then
         return 0
@@ -306,54 +343,22 @@ clear_stale_pid_file() {
     fi
 }
 
-ensure_update_manager_service() {
-    if ! command -v systemctl >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ]; then
-        return 0
-    fi
-
-    if ! systemctl --user show-environment >/dev/null 2>&1; then
-        return 0
-    fi
-
-    systemctl --user import-environment \
-        PATH \
-        DISPLAY \
-        WAYLAND_DISPLAY \
-        DBUS_SESSION_BUS_ADDRESS \
-        XAUTHORITY \
-        XDG_RUNTIME_DIR >/dev/null 2>&1 || true
-
-    if command -v dbus-update-activation-environment >/dev/null 2>&1; then
-        dbus-update-activation-environment --systemd \
-            PATH \
-            DISPLAY \
-            WAYLAND_DISPLAY \
-            DBUS_SESSION_BUS_ADDRESS \
-            XAUTHORITY \
-            XDG_RUNTIME_DIR >/dev/null 2>&1 || true
-    fi
-
-    if systemctl --user is-enabled codex-update-manager.service >/dev/null 2>&1; then
-        systemctl --user start codex-update-manager.service >/dev/null 2>&1 || true
-    else
-        systemctl --user enable --now codex-update-manager.service >/dev/null 2>&1 || true
-    fi
-}
-
+load_packaged_runtime_helper
 clear_stale_pid_file
-ensure_update_manager_service
+run_packaged_runtime_prelaunch
 pkill -f "http.server 5175" 2>/dev/null || true
-sleep 0.3
+sleep 0.5
 
 if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
     cd "$WEBVIEW_DIR"
-    python3 -m http.server 5175 &> /dev/null &
+    nohup python3 -m http.server 5175 &> /dev/null &
     HTTP_PID=$!
     trap "kill $HTTP_PID 2>/dev/null" EXIT
+
+    if ! wait_for_webview_server; then
+        notify_error "Webview server failed to start on port 5175. Check python3 and port availability."
+        exit 1
+    fi
 fi
 
 if [ -z "${CODEX_CLI_PATH:-}" ]; then
@@ -366,11 +371,20 @@ if [ -z "$CODEX_CLI_PATH" ]; then
     exit 1
 fi
 
+export_packaged_runtime_env
+
 echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH"
 
 cd "$SCRIPT_DIR"
 echo "$$" > "$APP_PID_FILE"
-exec "$SCRIPT_DIR/electron" --no-sandbox --class=codex-desktop --app-id=codex-desktop "$@"
+exec "$SCRIPT_DIR/electron" \
+    --no-sandbox \
+    --class=Codex \
+    --app-id=Codex \
+    --ozone-platform-hint=auto \
+    --disable-gpu-sandbox \
+    --enable-features=WaylandWindowDecorations \
+    "$@"
 SCRIPT
 
     chmod +x "$INSTALL_DIR/start.sh"

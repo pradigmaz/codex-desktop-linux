@@ -1,3 +1,5 @@
+//! Process liveness checks for the Electron app managed by the updater.
+
 use crate::config::RuntimeConfig;
 use anyhow::{Context, Result};
 use directories::BaseDirs;
@@ -6,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Returns the PID file used by the Linux launcher to track the Electron app.
 pub fn app_pid_file() -> Result<PathBuf> {
     let base_dirs = BaseDirs::new().context("Could not resolve XDG base directories")?;
     let state_root = base_dirs
@@ -14,8 +17,10 @@ pub fn app_pid_file() -> Result<PathBuf> {
     Ok(state_root.join("codex-desktop").join("app.pid"))
 }
 
+/// Detects whether the managed Electron app is currently running.
 pub fn is_app_running(config: &RuntimeConfig) -> Result<bool> {
-    if let Some(pid) = read_pid_file()?.filter(|pid| process_matches(*pid, &config.app_executable_path))
+    if let Some(pid) =
+        read_pid_file()?.filter(|pid| process_matches(*pid, &config.app_executable_path))
     {
         return Ok(is_process_alive(pid));
     }
@@ -91,7 +96,10 @@ mod tests {
         );
         config.app_executable_path = PathBuf::from("/opt/codex-desktop/electron");
 
-        assert!(!process_matches(std::process::id(), &config.app_executable_path));
+        assert!(!process_matches(
+            std::process::id(),
+            &config.app_executable_path
+        ));
         Ok(())
     }
 }

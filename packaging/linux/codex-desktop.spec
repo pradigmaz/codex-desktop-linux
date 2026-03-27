@@ -37,8 +37,70 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 %preun
-if [ $1 -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl --user disable --now codex-update-manager.service >/dev/null 2>&1 || true
+if command -v runuser >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+    cleanup_user_service() {
+        action="$1"
+        for runtime_dir in /run/user/*; do
+            [ -d "$runtime_dir" ] || continue
+
+            uid="$(basename "$runtime_dir")"
+            case "$uid" in
+                ''|*[!0-9]*|0)
+                    continue
+                    ;;
+            esac
+
+            bus="$runtime_dir/bus"
+            [ -S "$bus" ] || continue
+
+            user_name="$(getent passwd "$uid" | cut -d: -f1 || true)"
+            [ -n "$user_name" ] || continue
+
+            runuser -u "$user_name" -- env \
+                XDG_RUNTIME_DIR="$runtime_dir" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+                systemctl --user "$action" codex-update-manager.service >/dev/null 2>&1 || true
+
+            runuser -u "$user_name" -- env \
+                XDG_RUNTIME_DIR="$runtime_dir" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+                systemctl --user daemon-reload >/dev/null 2>&1 || true
+        done
+    }
+
+    cleanup_user_service stop
+    if [ $1 -eq 0 ]; then
+        cleanup_user_service disable
+    fi
+fi
+
+%postun
+if command -v runuser >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+    cleanup_user_service() {
+        for runtime_dir in /run/user/*; do
+            [ -d "$runtime_dir" ] || continue
+
+            uid="$(basename "$runtime_dir")"
+            case "$uid" in
+                ''|*[!0-9]*|0)
+                    continue
+                    ;;
+            esac
+
+            bus="$runtime_dir/bus"
+            [ -S "$bus" ] || continue
+
+            user_name="$(getent passwd "$uid" | cut -d: -f1 || true)"
+            [ -n "$user_name" ] || continue
+
+            runuser -u "$user_name" -- env \
+                XDG_RUNTIME_DIR="$runtime_dir" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+                systemctl --user daemon-reload >/dev/null 2>&1 || true
+        done
+    }
+
+    cleanup_user_service daemon-reload
 fi
 
 %changelog

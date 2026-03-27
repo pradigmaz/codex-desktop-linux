@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository adapts the official macOS Codex Desktop DMG to a runnable Linux build, packages that build as a `.deb`, and now ships a local Rust update manager that rebuilds future Linux packages from newer upstream DMGs.
+This repository adapts the official macOS Codex Desktop DMG to a runnable Linux build, packages that build as native `.deb` and `.rpm` artifacts, and ships a local Rust update manager that rebuilds future Linux packages from newer upstream DMGs.
 
 The current working flow is:
 
@@ -11,7 +11,7 @@ The current working flow is:
 3. rebuilds native Node modules for Linux
 4. downloads a Linux Electron runtime
 5. writes a Linux launcher into `codex-app/start.sh`
-6. `scripts/build-deb.sh` packages `codex-app/` into a Debian package
+6. `scripts/build-deb.sh` or `scripts/build-rpm.sh` packages `codex-app/`
 7. `codex-update-manager` runs as a `systemd --user` service and manages local auto-updates
 
 ## Source Of Truth
@@ -20,23 +20,43 @@ The current working flow is:
   Main installer and launcher generator.
 - `scripts/build-deb.sh`
   Builds the `.deb` from the already-generated `codex-app/`.
+- `scripts/build-rpm.sh`
+  Builds the `.rpm` from the already-generated `codex-app/`.
+- `scripts/install-deps.sh`
+  Installs host dependencies and bootstraps Rust.
+- `scripts/lib/package-common.sh`
+  Shared shell helpers used by the native package builders.
+- `Makefile`
+  Convenience targets for build, package, install, and cleanup workflows.
 - `packaging/linux/control`
   Debian control template.
 - `packaging/linux/codex-desktop.desktop`
   Desktop entry template.
+- `packaging/linux/codex-packaged-runtime.sh`
+  Packaged-launcher helper for native-package-only runtime behavior.
+- `packaging/linux/codex-desktop.spec`
+  RPM spec template.
 - `packaging/linux/codex-update-manager.service`
   User-level `systemd` unit for the local update manager.
+- `packaging/linux/codex-update-manager.prerm`
+  Debian maintainer script that stops or disables the user service during removal.
+- `packaging/linux/codex-update-manager.postrm`
+  Debian maintainer script that reloads affected user managers after removal.
 - `assets/codex.png`
-  App icon used in the `.deb`.
+  App icon used in native packages.
 - `updater/`
-  Rust crate that checks for new upstream DMGs, rebuilds local `.deb` artifacts, tracks update state, and installs prepared packages after the app exits.
+  Rust crate that checks for new upstream DMGs, rebuilds local native-package artifacts, tracks update state, and installs prepared packages after the app exits.
+- `updater/Cargo.toml`
+  Source of truth for the updater crate version and dependency policy.
+- `docs/webview-server-evaluation.md`
+  Decision record for the future Python-to-Rust webview server discussion.
 
 ## Generated Artifacts
 
 - `codex-app/`
   Generated Linux app directory. Treat this as build output unless you are intentionally patching the launcher or testing package contents.
 - `dist/`
-  Generated packaging output, including `dist/codex-desktop_*.deb`.
+  Generated packaging output, including `dist/codex-desktop_*.deb` and `dist/codex-desktop-*.rpm`.
 - `Codex.dmg`
   Cached upstream DMG. Useful for repeat installs.
 - `~/.config/codex-update-manager/config.toml`
@@ -46,7 +66,7 @@ The current working flow is:
 - `~/.local/state/codex-update-manager/service.log`
   Updater service log.
 - `~/.cache/codex-update-manager/`
-  Downloaded DMGs, rebuild workspaces, staged `.deb` artifacts, and build logs.
+  Downloaded DMGs, rebuild workspaces, staged package artifacts, and build logs.
 
 Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, prefer updating `install.sh` and then regenerating the app.
 
@@ -64,13 +84,29 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 - Desktop icon association:
   The launcher runs Electron with `--class=codex-desktop`, and the desktop file sets `StartupWMClass=codex-desktop` so the taskbar/dock can associate the correct icon.
 - Webview server:
-  The launcher starts a local `python3 -m http.server 5175` from `content/webview/` because the extracted app expects local webview assets there.
+  The launcher starts a local `python3 -m http.server 5175` from `content/webview/`, waits for port `5175` to become reachable, and only then launches Electron because the extracted app expects local webview assets there.
+- Wayland/GPU compatibility:
+  The generated launcher enables `--ozone-platform-hint=auto`, `--disable-gpu-sandbox`, and `--enable-features=WaylandWindowDecorations` by default. Keep these in mind when debugging Pop!_OS, Wayland, or Nvidia-specific rendering issues.
+- Webview server roadmap:
+  Review `docs/webview-server-evaluation.md` before changing the local server model; that document captures the current recommendation, risks, and acceptance criteria.
 - Closing behavior:
   If future work touches shutdown behavior, assume the confirmation dialog may be implemented inside the app bundle rather than the Linux launcher.
 - Update manager:
-  The `.deb` includes `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`.
+  The native packages include `/usr/bin/codex-update-manager`, `/usr/lib/systemd/user/codex-update-manager.service`, and a minimal rebuild bundle under `/opt/codex-desktop/update-builder`.
 - Privilege boundary:
-  The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>`.
+  The updater runs unprivileged. It only escalates at install time via `pkexec /usr/bin/codex-update-manager install-deb --path <deb>` or `pkexec /usr/bin/codex-update-manager install-rpm --path <rpm>`.
+- Failed privileged installs:
+  A failed or cancelled `pkexec` install now stays in `Failed` and does not auto-retry every reconcile cycle. Check `service.log`, fix the root cause, and retry by waiting for the next rebuild or rebuilding a newer package.
+- Package removal:
+  Debian and RPM removal now make a best-effort attempt to stop and disable `codex-update-manager.service` for active user sessions. If a user manager is unavailable, manual cleanup is still `systemctl --user disable --now codex-update-manager.service`.
+
+## Crate Versioning
+
+- Current updater crate version: `0.2.1`
+- Bump `patch` for fixes, docs, and maintenance-only updates.
+- Bump `minor` for compatible feature additions.
+- Bump `major` for incompatible CLI, persisted-state, or install-flow changes.
+- If the updater crate version changes, update README and AGENTS in the same change so the maintenance docs do not drift.
 
 ## How To Rebuild
 
@@ -104,6 +140,24 @@ Optional version override:
 PACKAGE_VERSION=2026.03.24.120000+deadbeef ./scripts/build-deb.sh
 ```
 
+### Build the RPM package
+
+```bash
+./scripts/build-rpm.sh
+```
+
+Default output:
+
+```bash
+dist/codex-desktop-YYYY.MM.DD.HHMMSS-<release>.x86_64.rpm
+```
+
+Optional version override:
+
+```bash
+PACKAGE_VERSION=2026.03.24.120000+deadbeef ./scripts/build-rpm.sh
+```
+
 ## Runtime Expectations
 
 - `node`, `npm`, `npx`, `python3`, `7z`, `curl`, `unzip`, `make`, and `g++` are required for `install.sh`
@@ -113,7 +167,7 @@ PACKAGE_VERSION=2026.03.24.120000+deadbeef ./scripts/build-deb.sh
 
 ## Packaging Notes
 
-The `.deb` currently installs:
+The native packages currently install:
 
 - app files under `/opt/codex-desktop`
 - launcher under `/usr/bin/codex-desktop`
@@ -123,7 +177,9 @@ The `.deb` currently installs:
 - desktop file under `/usr/share/applications/codex-desktop.desktop`
 - icon under `/usr/share/icons/hicolor/256x256/apps/codex-desktop.png`
 
-The builder uses `dpkg-deb --root-owner-group` so package ownership is correct.
+The Debian builder uses `dpkg-deb --root-owner-group` so package ownership is correct.
+
+The RPM builder stages the same app and updater payload into an RPM buildroot before invoking `rpmbuild`.
 
 ## Preferred Validation After Changes
 
@@ -132,11 +188,18 @@ After editing installer or packaging logic, validate at least:
 ```bash
 bash -n install.sh
 bash -n scripts/build-deb.sh
+bash -n scripts/build-rpm.sh
 cargo check -p codex-update-manager
 cargo test -p codex-update-manager
 ./scripts/build-deb.sh
 dpkg-deb -I dist/codex-desktop_*.deb
 dpkg-deb -c dist/codex-desktop_*.deb | sed -n '1,40p'
+```
+
+If `rpmbuild` is available, also run:
+
+```bash
+./scripts/build-rpm.sh
 ```
 
 If launcher behavior changed, also inspect:
@@ -157,5 +220,7 @@ sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 ## Editing Guidance
 
 - Prefer changing `install.sh` over manually patching `codex-app/start.sh`, unless you are making a temporary local test.
-- If you update the launcher template inside `install.sh`, regenerate `codex-app/` or keep `codex-app/start.sh` aligned before building a new `.deb`.
-- Keep packaging changes in `packaging/linux/` and `scripts/build-deb.sh`; avoid hardcoding distro-specific behavior outside those files unless necessary.
+- Keep native-package-only launcher behavior in `packaging/linux/codex-packaged-runtime.sh`; `install.sh` should stay generic and only load that helper optionally.
+- If you update the launcher template inside `install.sh`, regenerate `codex-app/` or keep `codex-app/start.sh` aligned before building a new package.
+- Keep packaging changes in `packaging/linux/`, `scripts/build-deb.sh`, and `scripts/build-rpm.sh`; avoid hardcoding distro-specific behavior outside those files unless necessary.
+- Keep `scripts/lib/package-common.sh` aligned with both builders when you add or remove packaged files from the shared runtime payload.
