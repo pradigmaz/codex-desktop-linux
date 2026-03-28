@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "${HOME}/.local/lib/codex-desktop-linux/common.sh"
+source "${HOME}/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/common.sh"
 
 ensure_layout
+load_install_config
 load_metadata
 
 quiet=0
@@ -79,6 +80,12 @@ fi
 if [ "$repo_changed" -eq 1 ]; then
     log "Pulling wrapper updates..."
     git -C "$REPO_DIR" pull --ff-only
+    if [ -x "$REPO_DIR/contrib/user-local-install/install-user-local.sh" ]; then
+        log "Refreshing installed helper scripts..."
+        "$REPO_DIR/contrib/user-local-install/install-user-local.sh" --from-update
+        load_install_config
+        load_metadata
+    fi
 fi
 
 if [ "$dmg_changed" -eq 1 ]; then
@@ -89,7 +96,7 @@ fi
 log "Rebuilding wrapper..."
 (
     cd "$REPO_DIR"
-    ./install.sh
+    CODEX_INSTALL_ROOT="$OPT_ROOT" CODEX_INSTALL_DIR="$APP_DIR" ./install.sh
 )
 
 extract_icon

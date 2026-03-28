@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="${HOME}/.local/opt/codex-desktop-linux"
-APP_DIR="${REPO_DIR}/codex-app"
-DMG_FILE="${REPO_DIR}/Codex.dmg"
+OPT_ROOT="${HOME}/.local/opt/codex-desktop-linux"
+APP_DIR="${OPT_ROOT}/codex-app"
+DMG_FILE="${OPT_ROOT}/Codex.dmg"
 DMG_URL="https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
@@ -12,11 +12,23 @@ XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
 STATE_DIR="${XDG_STATE_HOME}/codex-desktop-linux"
 LOG_DIR="${STATE_DIR}/logs"
 METADATA_FILE="${STATE_DIR}/metadata.env"
+INSTALL_CONFIG_FILE="${STATE_DIR}/install.env"
 ICON_PATH="${XDG_DATA_HOME}/icons/hicolor/512x512/apps/codex-desktop.png"
 DESKTOP_FILE="${XDG_DATA_HOME}/applications/codex-desktop.desktop"
 
+REPO_DIR_DEFAULT="${HOME}/workspace/codex-desktop-linux"
+REPO_DIR="$REPO_DIR_DEFAULT"
+
 ensure_layout() {
     mkdir -p "$STATE_DIR" "$LOG_DIR" "$(dirname "$ICON_PATH")" "$(dirname "$DESKTOP_FILE")"
+}
+
+load_install_config() {
+    if [ -f "$INSTALL_CONFIG_FILE" ]; then
+        # shellcheck disable=SC1090
+        source "$INSTALL_CONFIG_FILE"
+    fi
+    REPO_DIR="${REPO_DIR:-$REPO_DIR_DEFAULT}"
 }
 
 load_metadata() {
@@ -69,10 +81,16 @@ PY
 
 record_metadata() {
     ensure_layout
+    load_install_config
 
     local repo_head dmg_sha256 dmg_size electron_version dmg_headers dmg_etag dmg_last_modified dmg_content_length build_time repo_origin
-    repo_head="$(current_repo_head)"
-    repo_origin="$(git -C "$REPO_DIR" remote get-url origin)"
+    if [ -d "$REPO_DIR/.git" ]; then
+        repo_head="$(current_repo_head)"
+        repo_origin="$(git -C "$REPO_DIR" remote get-url origin)"
+    else
+        repo_head="unavailable"
+        repo_origin="unavailable"
+    fi
     dmg_sha256="$(sha256sum "$DMG_FILE" | awk '{ print $1 }')"
     dmg_size="$(stat -c '%s' "$DMG_FILE")"
     electron_version="$(cat "$APP_DIR/version")"
@@ -95,5 +113,7 @@ record_metadata() {
         write_kv ELECTRON_VERSION "$electron_version"
         write_kv APP_DIR "$APP_DIR"
         write_kv ICON_PATH "$ICON_PATH"
+        write_kv OPT_ROOT "$OPT_ROOT"
+        write_kv REPO_DIR "$REPO_DIR"
     } > "$METADATA_FILE"
 }

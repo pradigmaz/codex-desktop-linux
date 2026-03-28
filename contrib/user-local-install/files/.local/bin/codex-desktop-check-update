@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "${HOME}/.local/lib/codex-desktop-linux/common.sh"
+source "${HOME}/.local/opt/codex-desktop-linux/lib/codex-desktop-linux/common.sh"
 
 ensure_layout
+load_install_config
 load_metadata
 
 local_head="$(current_repo_head)"
@@ -35,7 +36,8 @@ if [ "${DMG_ETAG-}" != "$remote_etag" ] || [ "${DMG_LAST_MODIFIED-}" != "$remote
     dmg_changed=1
 fi
 
-echo "Install root: $REPO_DIR"
+echo "Install root: $OPT_ROOT"
+echo "Repo root:    $REPO_DIR"
 echo "Wrapper repo local:  $local_head"
 echo "Wrapper repo remote: $remote_head"
 echo "Cached DMG etag:     ${DMG_ETAG-untracked}"
