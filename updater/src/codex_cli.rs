@@ -5,16 +5,17 @@ use crate::{
     state::{CliStatus, PersistedState},
 };
 use anyhow::{anyhow, Context, Result};
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 use tracing::{info, warn};
 
 const CLI_PACKAGE_NAME: &str = "@openai/codex";
+const CLI_VERSION_CHECK_TTL: Duration = Duration::hours(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreflightOutcome {
@@ -29,17 +30,30 @@ pub fn preflight(
     paths: &RuntimePaths,
     explicit_cli_path: Option<PathBuf>,
 ) -> Result<PreflightOutcome> {
-    state.cli_last_check_at = Some(Utc::now());
-    state.cli_error_message = None;
-    state.cli_status = CliStatus::Checking;
-    persist_state(paths, state)?;
-
     let requested_path = explicit_cli_path.as_deref();
     let cli_path = resolve_cli_path(requested_path)
         .ok_or_else(|| anyhow!("Codex CLI not found in PATH or known install locations"))?;
     let installed_version = read_installed_version(&cli_path)?;
     state.cli_path = Some(cli_path.clone());
     state.cli_installed_version = Some(installed_version.clone());
+    persist_state(paths, state)?;
+
+    if should_skip_latest_version_check(state, &installed_version) {
+        info!(
+            installed_version,
+            "skipping Codex CLI registry lookup because the cached result is still fresh"
+        );
+        return Ok(PreflightOutcome {
+            cli_path,
+            installed_version,
+            latest_version: state.cli_latest_version.clone(),
+            updated: false,
+        });
+    }
+
+    state.cli_last_check_at = Some(Utc::now());
+    state.cli_error_message = None;
+    state.cli_status = CliStatus::Checking;
     persist_state(paths, state)?;
 
     let latest_version = match read_latest_version() {
@@ -146,11 +160,23 @@ fn known_cli_locations() -> Vec<PathBuf> {
             versioned_paths.reverse();
             candidates.extend(versioned_paths);
         }
+        candidates.push(home.join(".local/share/pnpm/codex"));
         candidates.push(home.join(".local/bin/codex"));
     }
     candidates.push(PathBuf::from("/usr/local/bin/codex"));
     candidates.push(PathBuf::from("/usr/bin/codex"));
     candidates
+}
+
+fn should_skip_latest_version_check(state: &PersistedState, installed_version: &str) -> bool {
+    let Some(last_check_at) = state.cli_last_check_at else {
+        return false;
+    };
+    if state.cli_installed_version.as_deref() != Some(installed_version) {
+        return false;
+    }
+
+    Utc::now().signed_duration_since(last_check_at) < CLI_VERSION_CHECK_TTL
 }
 
 fn read_installed_version(cli_path: &Path) -> Result<String> {
@@ -202,25 +228,45 @@ fn read_latest_version() -> Result<String> {
 
 fn install_latest_cli(latest_version: &str) -> Result<()> {
     let npm = npm_program();
-    let status = Command::new(&npm)
-        .env("PATH", command_path_env())
-        .args([
-            "install",
-            "-g",
-            &format!("{CLI_PACKAGE_NAME}@{latest_version}"),
-        ])
-        .status()
-        .with_context(|| format!("Failed to spawn {}", npm.display()))?;
+    let package_spec = format!("{CLI_PACKAGE_NAME}@{latest_version}");
+    let global_args = vec![
+        OsString::from("install"),
+        OsString::from("-g"),
+        OsString::from(&package_spec),
+    ];
 
-    anyhow::ensure!(
-        status.success(),
-        "{} install -g {}@{} exited with {}",
-        npm.display(),
-        CLI_PACKAGE_NAME,
-        latest_version,
-        status
-    );
-    Ok(())
+    match run_npm_command(&npm, &global_args) {
+        Ok(()) => Ok(()),
+        Err(global_error) => {
+            warn!(
+                ?global_error,
+                "global npm install failed; retrying Codex CLI upgrade with a user-local prefix"
+            );
+
+            let local_prefix = local_npm_prefix();
+            fs::create_dir_all(&local_prefix).with_context(|| {
+                format!(
+                    "Failed to create local npm prefix {}",
+                    local_prefix.display()
+                )
+            })?;
+
+            let local_args = vec![
+                OsString::from("install"),
+                OsString::from("-g"),
+                OsString::from("--prefix"),
+                local_prefix.as_os_str().to_os_string(),
+                OsString::from(&package_spec),
+            ];
+
+            run_npm_command(&npm, &local_args).with_context(|| {
+                format!(
+                    "npm install -g failed first ({global_error}); fallback install into {} also failed",
+                    local_prefix.display()
+                )
+            })
+        }
+    }
 }
 
 fn run_command<I, S>(program: &Path, args: I) -> Result<String>
@@ -284,6 +330,53 @@ fn npm_program() -> PathBuf {
     find_in_path("npm", &command_path_env()).unwrap_or_else(|| PathBuf::from("npm"))
 }
 
+fn local_npm_prefix() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".local")
+}
+
+fn run_npm_command(npm: &Path, args: &[OsString]) -> Result<()> {
+    let output = Command::new(npm)
+        .env("PATH", command_path_env())
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to spawn {}", npm.display()))?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "{} {} failed with {}{}",
+        npm.display(),
+        format_command_args(args),
+        output.status,
+        format_command_output(&output)
+    );
+
+    Ok(())
+}
+
+fn format_command_args(args: &[OsString]) -> String {
+    args.iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_command_output(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return format!(": {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        String::new()
+    } else {
+        format!(": {stdout}")
+    }
+}
+
 fn find_in_path(name: &str, path_env: &OsString) -> Option<PathBuf> {
     std::env::split_paths(path_env).find_map(|entry| {
         let candidate = entry.join(name);
@@ -345,6 +438,8 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::PersistedState;
+    use chrono::Utc;
 
     #[test]
     fn extracts_plain_semver() {
@@ -362,5 +457,32 @@ mod tests {
     #[test]
     fn ignores_non_version_text() {
         assert_eq!(extract_version("Codex CLI"), None);
+    }
+
+    #[test]
+    fn skips_registry_lookup_when_previous_check_is_fresh_for_same_cli_version() {
+        let mut state = PersistedState::new(true);
+        state.cli_installed_version = Some("0.42.0".to_string());
+        state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
+
+        assert!(should_skip_latest_version_check(&state, "0.42.0"));
+    }
+
+    #[test]
+    fn does_not_skip_registry_lookup_when_cli_version_changed() {
+        let mut state = PersistedState::new(true);
+        state.cli_installed_version = Some("0.42.0".to_string());
+        state.cli_last_check_at = Some(Utc::now() - Duration::minutes(30));
+
+        assert!(!should_skip_latest_version_check(&state, "0.43.0"));
+    }
+
+    #[test]
+    fn does_not_skip_registry_lookup_when_cached_check_is_stale() {
+        let mut state = PersistedState::new(true);
+        state.cli_installed_version = Some("0.42.0".to_string());
+        state.cli_last_check_at = Some(Utc::now() - Duration::hours(2));
+
+        assert!(!should_skip_latest_version_check(&state, "0.42.0"));
     }
 }

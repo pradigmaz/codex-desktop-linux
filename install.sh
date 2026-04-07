@@ -395,8 +395,8 @@ run_cli_preflight() {
 
     local refreshed_path=""
     if ! refreshed_path="$(codex-update-manager cli-preflight --cli-path "$CODEX_CLI_PATH" --print-path)"; then
-        notify_error "Codex CLI is outdated or broken and the automatic prelaunch update failed. Check the launcher and updater logs."
-        exit 1
+        notify_error "Codex CLI prelaunch update check failed. Continuing with the current CLI. Check the launcher and updater logs if Codex Desktop misbehaves."
+        return 0
     fi
 
     if [ -n "$refreshed_path" ]; then
@@ -527,7 +527,7 @@ fi
 export CHROME_DESKTOP="${CHROME_DESKTOP:-codex-desktop.desktop}"
 
 if [ -z "$CODEX_CLI_PATH" ]; then
-    notify_error "Codex CLI not found. Install with: npm i -g @openai/codex"
+    notify_error "Codex CLI not found. Install with: npm i -g @openai/codex or npm i -g --prefix ~/.local @openai/codex"
     exit 1
 fi
 
@@ -590,7 +590,7 @@ main() {
     create_start_script
 
     if ! command -v codex &>/dev/null; then
-        warn "Codex CLI not found. Install it: npm i -g @openai/codex"
+        warn "Codex CLI not found. Install it with: npm i -g @openai/codex or npm i -g --prefix ~/.local @openai/codex"
     fi
 
     echo ""                                             >&2

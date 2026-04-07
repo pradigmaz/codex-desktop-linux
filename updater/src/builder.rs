@@ -21,7 +21,8 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 6] = [
         "scripts/patch-linux-window-ui.js",
         "scripts/patch-linux-window-ui.js",
     ),
-    ("scripts/lib/package-common.sh",
+    (
+        "scripts/lib/package-common.sh",
         "scripts/lib/package-common.sh",
     ),
     ("packaging/linux", "packaging/linux"),
