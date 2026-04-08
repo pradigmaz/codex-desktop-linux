@@ -92,7 +92,7 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 - Desktop icon association:
   The launcher runs Electron with `--class=codex-desktop`, and the desktop file sets `StartupWMClass=codex-desktop` so the taskbar/dock can associate the correct icon.
 - Webview server:
-  The launcher starts a local `python3 -m http.server 5175` from `content/webview/`, waits for port `5175` to become reachable, and only then launches Electron because the extracted app expects local webview assets there.
+  The launcher starts a local `python3 -m http.server 5175` from `content/webview/`, waits for port `5175` to become reachable, verifies that `http://127.0.0.1:5175/index.html` serves the expected Codex startup markers, and only then launches Electron because the extracted app expects local webview assets there.
 - Wayland/GPU compatibility:
   The generated launcher enables `--ozone-platform-hint=auto`, `--disable-gpu-sandbox`, and `--enable-features=WaylandWindowDecorations` by default. Keep these in mind when debugging Pop!_OS, Wayland, or Nvidia-specific rendering issues.
 - Webview server roadmap:

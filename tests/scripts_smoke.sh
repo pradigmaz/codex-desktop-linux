@@ -197,6 +197,8 @@ test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" "nohup python3 -m http.server 5175"
     assert_contains "$REPO_DIR/install.sh" "wait_for_webview_server"
+    assert_contains "$REPO_DIR/install.sh" "verify_webview_origin"
+    assert_contains "$REPO_DIR/install.sh" "Webview origin verified."
     assert_contains "$REPO_DIR/install.sh" "--app-id=codex-desktop"
     assert_contains "$REPO_DIR/install.sh" "--ozone-platform-hint=auto"
     assert_contains "$REPO_DIR/install.sh" "--disable-gpu-sandbox"

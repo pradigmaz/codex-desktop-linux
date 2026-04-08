@@ -368,6 +368,7 @@ The macOS Codex app is an Electron application. The core code (`app.asar`) is pl
 The installer replaces the macOS Electron with a Linux build and recompiles the native modules using `@electron/rebuild`. The `sparkle` module is removed because it is macOS-only.
 
 The extracted app expects a local webview origin on `localhost:5175`, so the launcher starts `python3 -m http.server 5175` from `content/webview/`, waits for the socket to become reachable, and only then launches Electron.
+The launcher now also verifies that `http://127.0.0.1:5175/index.html` contains the expected Codex startup markers before Electron launches, so a port collision or incomplete extracted webview fails fast in `launcher.log` instead of hanging on the splash screen.
 
 Native-package-only launcher behavior such as desktop-entry hints and `codex-update-manager` session bootstrapping lives in `packaging/linux/codex-packaged-runtime.sh`, which the generated launcher loads only when present inside a packaged install.
 
@@ -380,6 +381,7 @@ The current evaluation for a future Rust replacement for the local webview serve
 | `Error: write EPIPE` | Run `start.sh` directly instead of piping output |
 | Blank window | Check whether port 5175 is already in use: `ss -tlnp \| grep 5175` |
 | `ERR_CONNECTION_REFUSED` on `:5175` | The webview HTTP server failed to start. Ensure `python3` works and port 5175 is free |
+| Stuck on the Codex logo splash | Check `~/.cache/codex-desktop/launcher.log`. If webview origin validation failed, another process is probably serving port `5175` or the extracted `content/webview/` bundle is incomplete |
 | `CODEX_CLI_PATH` error | Install the CLI with `npm i -g @openai/codex` or `npm i -g --prefix ~/.local @openai/codex` |
 | Electron hangs while the CLI is outdated | Re-run the launcher and check `~/.cache/codex-desktop/launcher.log` plus `~/.local/state/codex-update-manager/service.log`; the launcher now runs a best-effort CLI preflight and warns if the automatic refresh fails |
 | GPU/Vulkan/Wayland errors | The launcher sets `--ozone-platform-hint=auto`, `--disable-gpu-sandbox`, `--disable-gpu-compositing`, and `--enable-features=WaylandWindowDecorations` by default. If you need X11 explicitly, try `./codex-app/start.sh --ozone-platform=x11` |

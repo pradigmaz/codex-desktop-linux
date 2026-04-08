@@ -495,6 +495,27 @@ wait_for_webview_server() {
     return 1
 }
 
+verify_webview_origin() {
+    local url="$1"
+
+    python3 - "$url" <<'PY'
+import sys
+import urllib.request
+
+url = sys.argv[1]
+required_markers = ("<title>Codex</title>", "startup-loader")
+
+with urllib.request.urlopen(url, timeout=2) as response:
+    body = response.read(8192).decode("utf-8", "ignore")
+
+missing = [marker for marker in required_markers if marker not in body]
+if missing:
+    raise SystemExit(
+        f"Webview origin validation failed for {url}; missing markers: {', '.join(missing)}"
+    )
+PY
+}
+
 clear_stale_pid_file() {
     if [ ! -f "$APP_PID_FILE" ]; then
         return 0
@@ -515,19 +536,28 @@ sleep 0.5
 
 if [ -d "$WEBVIEW_DIR" ] && [ "$(ls -A "$WEBVIEW_DIR" 2>/dev/null)" ]; then
     cd "$WEBVIEW_DIR"
-    nohup python3 -m http.server 5175 &> /dev/null &
+    nohup python3 -m http.server 5175 &
     HTTP_PID=$!
     trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-    # Wait for the HTTP server to be ready (up to 5 seconds)
-    echo "Waiting for webview server..."
-    for i in $(seq 1 50); do
-        if python3 -c "import socket; s=socket.socket(); s.settimeout(0.5); s.connect(('127.0.0.1',5175)); s.close()" 2>/dev/null; then
-            echo "Webview server ready."
-            break
-        fi
-        sleep 0.1
-    done
+    echo "Started webview server pid=$HTTP_PID dir=$WEBVIEW_DIR"
+
+    if ! wait_for_webview_server; then
+        notify_error "Codex Desktop webview server did not become ready on port 5175. Check the launcher log for the embedded http.server output."
+        exit 1
+    fi
+
+    if ! kill -0 "$HTTP_PID" 2>/dev/null; then
+        notify_error "Codex Desktop webview server exited before Electron launch. Another process may already be using port 5175."
+        exit 1
+    fi
+
+    if ! verify_webview_origin "http://127.0.0.1:5175/index.html"; then
+        notify_error "Codex Desktop webview origin validation failed. Another process may be serving port 5175 or the extracted webview bundle is incomplete."
+        exit 1
+    fi
+
+    echo "Webview origin verified."
 fi
 
 if [ -z "${CODEX_CLI_PATH:-}" ]; then
