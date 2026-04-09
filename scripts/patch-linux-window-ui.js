@@ -37,14 +37,18 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
 const windowOptionsNeedle =
   "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
+const iconPathExpression =
+  `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
 const iconPathNeedle =
+  `icon:${iconPathExpression}`;
+const legacyIconPathNeedle =
   `icon:t.join(process.resourcesPath,\`..\`,\`content\`,\`webview\`,\`assets\`,\`${iconAsset}\`)`;
 const windowOptionsReplacement =
   `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
 
 if (source.includes(windowOptionsNeedle)) {
   source = source.replace(windowOptionsNeedle, windowOptionsReplacement);
-} else if (!source.includes(iconPathNeedle)) {
+} else if (!source.includes(iconPathNeedle) && !source.includes(legacyIconPathNeedle)) {
   console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
 }
 
@@ -61,7 +65,7 @@ if (source.includes(menuNeedle) && !source.includes(menuPatch)) {
 const setIconNeedle =
   ")}),D.once(`ready-to-show`,()=>{";
 const setIconPatch =
-  `)}),process.platform===\`linux\`&&D.setIcon(t.join(process.resourcesPath,\`..\`,\`content\`,\`webview\`,\`assets\`,\`${iconAsset}\`)),D.once(\`ready-to-show\`,()=>{`;
+  `)}),process.platform===\`linux\`&&D.setIcon(${iconPathExpression}),D.once(\`ready-to-show\`,()=>{`;
 
 if (source.includes(setIconNeedle) && !source.includes("&&D.setIcon(")) {
   source = source.replace(setIconNeedle, setIconPatch);
