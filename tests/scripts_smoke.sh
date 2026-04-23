@@ -419,6 +419,7 @@ PY
     assert_contains "$REPO_DIR/install.sh" "--disable-gpu-sandbox"
     assert_contains "$REPO_DIR/install.sh" "--force-renderer-accessibility"
     assert_contains "$REPO_DIR/install.sh" "PACKAGED_RUNTIME_HELPER"
+    assert_contains "$REPO_DIR/install.sh" "--allow-install-missing"
     assert_contains "$REPO_DIR/install.sh" "CODEX_INSTALL_ALLOW_RUNNING"
     assert_contains "$REPO_DIR/install.sh" "assert_install_target_not_running"
     assert_contains "$REPO_DIR/install.sh" "find_running_install_target_pid"
