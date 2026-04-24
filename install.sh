@@ -424,13 +424,29 @@ export_packaged_runtime_env() {
 }
 
 run_cli_preflight() {
+    local allow_install_missing="${1:-0}"
     if ! command -v codex-update-manager >/dev/null 2>&1; then
+        if [ "$allow_install_missing" = "1" ]; then
+            return 1
+        fi
         return 0
     fi
 
+    local -a preflight_args=(
+        cli-preflight
+        --cli-path "$CODEX_CLI_PATH"
+        --print-path
+    )
+    if [ "$allow_install_missing" = "1" ]; then
+        preflight_args+=(--allow-install-missing)
+    fi
+
     local refreshed_path=""
-    if ! refreshed_path="$(codex-update-manager cli-preflight --cli-path "$CODEX_CLI_PATH" --print-path --allow-install-missing)"; then
-        notify_error "Codex CLI prelaunch check or automatic installation failed. Continuing with the current CLI state. Check the launcher and updater logs if Codex Desktop misbehaves."
+    if ! refreshed_path="$(codex-update-manager "${preflight_args[@]}")"; then
+        if [ "$allow_install_missing" = "1" ]; then
+            return 1
+        fi
+        notify_error "Codex CLI prelaunch check failed. Continuing with the current CLI state. Check the launcher and updater logs if Codex Desktop misbehaves."
         return 0
     fi
 
@@ -450,6 +466,35 @@ run_cli_preflight_background() {
             echo "Codex CLI background preflight failed. Continuing with the current CLI."
         fi
     ) &
+}
+
+is_interactive_terminal() {
+    [ -t 0 ] && [ -t 1 ]
+}
+
+prompt_install_missing_cli() {
+    if ! is_interactive_terminal; then
+        return 1
+    fi
+
+    if ! command -v codex-update-manager >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local reply=""
+    printf 'Codex CLI is not installed. Install it now? [Y/n] '
+    if ! read -r reply; then
+        return 1
+    fi
+
+    case "$reply" in
+        ""|y|Y|yes|YES|Yes)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 resolve_notification_icon() {
@@ -827,13 +872,22 @@ fi
 export CHROME_DESKTOP="${CHROME_DESKTOP:-codex-desktop.desktop}"
 
 if [ "$WARM_START" -eq 0 ] && [ -z "$CODEX_CLI_PATH" ]; then
+    if prompt_install_missing_cli; then
+        if ! run_cli_preflight 1; then
+            notify_error "Codex CLI automatic installation failed. Install with: npm i -g @openai/codex or npm i -g --prefix ~/.local @openai/codex"
+            exit 1
+        fi
+    fi
+fi
+
+if [ "$WARM_START" -eq 0 ] && [ -z "$CODEX_CLI_PATH" ]; then
     notify_error "Codex CLI not found. Install with: npm i -g @openai/codex or npm i -g --prefix ~/.local @openai/codex"
     exit 1
 fi
 
 if [ "$WARM_START" -eq 0 ]; then
     if [ "${CODEX_SYNC_CLI_PREFLIGHT:-0}" = "1" ]; then
-        run_cli_preflight
+        run_cli_preflight 0
         log_phase "cli_preflight_sync"
     else
         run_cli_preflight_background
