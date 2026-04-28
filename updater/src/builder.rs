@@ -462,6 +462,34 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             "[Unit]\nDescription=Codex Update Manager\n",
         )?;
         fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager-user-service.sh"),
+            "#!/bin/bash\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.postinst"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.prerm"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.postrm"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-packaged-runtime.sh"),
+            "#!/bin/bash\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/PKGBUILD.template"),
+            "pkgname=codex\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-desktop.install"),
+            "post_install() { :; }\n",
+        )?;
+        fs::write(
             bundle_root.join("install.sh"),
             r#"#!/bin/bash
 set -euo pipefail

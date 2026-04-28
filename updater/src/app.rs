@@ -38,8 +38,9 @@ pub async fn run(cli: Cli) -> Result<()> {
     let config = RuntimeConfig::load_or_default(&paths)?;
     let mut state =
         PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+    let original_state = state.clone();
     state.installed_version = install::installed_package_version();
-    state.save(&paths.state_file)?;
+    persist_if_changed(&paths, &state, &original_state)?;
 
     match cli.command {
         Commands::Daemon => run_daemon(&config, &mut state, &paths).await,
@@ -72,6 +73,18 @@ fn persist_state(paths: &RuntimePaths, state: &PersistedState) -> Result<()> {
     state.save(&paths.state_file)
 }
 
+fn persist_if_changed(
+    paths: &RuntimePaths,
+    state: &PersistedState,
+    original_state: &PersistedState,
+) -> Result<()> {
+    if state != original_state {
+        persist_state(paths, state)?;
+    }
+
+    Ok(())
+}
+
 fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
     state.auto_install_on_app_exit = config.auto_install_on_app_exit;
     state.installed_version = install::installed_package_version();
@@ -82,8 +95,9 @@ fn sync_and_persist(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    let original_state = state.clone();
     sync_runtime_state(config, state);
-    persist_state(paths, state)
+    persist_if_changed(paths, state, &original_state)
 }
 
 fn set_status(
