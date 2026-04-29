@@ -227,6 +227,61 @@ SCRIPT
     [ -z "$second_line" ] || fail "Expected make build-app default DMG argument to be empty so install.sh falls back to reuse/download, got: $(cat "$install_log")"
 }
 
+test_installer_detects_electron_version_from_plist() {
+    info "Checking Electron version detection from app metadata"
+    local workspace="$TMP_DIR/electron-version"
+    local app_dir="$workspace/Codex.app"
+    local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$plist_dir"
+    cat > "$plist_dir/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleVersion</key>
+    <string>42.5.7</string>
+</dict>
+</plist>
+PLIST
+
+    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; detect_electron_version "$2"; printf "%s\n" "$ELECTRON_VERSION"' \
+        _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1
+
+    assert_contains "$output_log" "Detected Electron version from DMG: 42.5.7"
+    [ "$(tail -n 1 "$output_log")" = "42.5.7" ] || fail "Expected detected Electron version 42.5.7, got: $(cat "$output_log")"
+}
+
+test_installer_keeps_electron_fallback_for_bad_metadata() {
+    info "Checking Electron version fallback for malformed metadata"
+    local workspace="$TMP_DIR/electron-version-fallback"
+    local app_dir="$workspace/Codex.app"
+    local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$plist_dir"
+    cat > "$plist_dir/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleVersion</key>
+    <string>not-a-version</string>
+</dict>
+</plist>
+PLIST
+
+    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; detect_electron_version "$2"; printf "%s\n" "$ELECTRON_VERSION"' \
+        _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1
+
+    assert_contains "$output_log" "Ignoring invalid Electron version from DMG: not-a-version"
+    assert_contains "$output_log" "Could not auto-detect Electron version; using fallback 41.3.0"
+    [ "$(tail -n 1 "$output_log")" = "41.3.0" ] || fail "Expected fallback Electron version 41.3.0, got: $(cat "$output_log")"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" "python3 -m http.server 5175 --bind 127.0.0.1"
@@ -426,6 +481,8 @@ main() {
     test_rpm_builder_smoke
     test_missing_input_failure
     test_make_build_app_uses_installer_download_flow_by_default
+    test_installer_detects_electron_version_from_plist
+    test_installer_keeps_electron_fallback_for_bad_metadata
     test_launcher_template_sanity
     test_linux_file_manager_patch_smoke
     test_linux_translucent_sidebar_default_patch_smoke
