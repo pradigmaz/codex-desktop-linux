@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Packaged GUI launches can now prompt to install a missing Codex CLI through `codex-update-manager`, preferring `kdialog` on KDE/Plasma, then `zenity`, and finally an actionable desktop notification when no dialog helper is available.
 - `scripts/install-deps.sh` now installs one desktop-appropriate GUI dialog helper so first-run CLI installation works cleanly outside a terminal.
+- GitHub Actions CI now runs Rust checks, script smoke tests, and real Debian, RPM, and pacman package build validations with job summaries.
 
 ### Changed
 
