@@ -14,10 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - `make build-app` now defers to `install.sh` when no `DMG=...` override is provided, so fresh checkouts can reuse or download `Codex.dmg` through the installer's normal flow instead of failing on a missing local cache path.
+- Electron runtime downloads are now cached under `~/.cache/codex-desktop/electron` and resume interrupted transfers, reducing repeated `make build-app` rebuild time.
 - Launcher CLI preflight now uses cached local CLI state on the fast path, leaving heavier `codex --version` and registry refresh work to the updater when the cache is stale or invalid.
 
 ### Fixed
 
+- `make build-app` now rebuilds `better-sqlite3` with an Electron 41-compatible release when the upstream DMG bundles an older native module source.
 - `codex-update-manager` now refreshes CLI status when the daemon starts and shows a desktop notification if the Codex CLI is missing, so package installs do not rely on the user manually checking updater state to understand why Codex Desktop cannot launch cleanly.
 - When the Codex CLI is missing, terminal launches still prompt before installation and GUI launches now have a matching fallback path instead of failing with only a passive notification.
 

@@ -343,6 +343,11 @@ PLIST
 
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
+    assert_contains "$REPO_DIR/install.sh" "python3 -m http.server 5175 --bind 127.0.0.1"
+    assert_contains "$REPO_DIR/install.sh" "MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41=\"12.9.0\""
+    assert_contains "$REPO_DIR/install.sh" "better_sqlite3_build_version"
+    assert_contains "$REPO_DIR/install.sh" "CODEX_ELECTRON_CACHE_DIR"
+    assert_contains "$REPO_DIR/install.sh" "--continue-at -"
     assert_contains "$REPO_DIR/install.sh" 'python3 -m http.server "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
     assert_contains "$REPO_DIR/install.sh" "WEBVIEW_PID_FILE"
     assert_contains "$REPO_DIR/install.sh" "owned_webview_server_pid"

@@ -19,6 +19,7 @@ fi
 INSTALL_DIR="${CODEX_INSTALL_DIR:-$INSTALL_ROOT/$DEFAULT_INSTALL_DIR_NAME}"
 CODEX_WEBVIEW_PORT="${CODEX_WEBVIEW_PORT:-$DEFAULT_CODEX_WEBVIEW_PORT}"
 ELECTRON_VERSION="41.3.0"
+MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
 ICON_SOURCE="$SCRIPT_DIR/assets/codex.png"
@@ -398,11 +399,30 @@ process.stdout.write(String(pkg.devDependencies?.electron ?? pkg.dependencies?.e
 }
 
 # ---- Build native modules in a clean directory ----
+version_lt() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]
+}
+
+better_sqlite3_build_version() {
+    local detected_version="$1"
+
+    case "$ELECTRON_VERSION" in
+        41.*)
+            if version_lt "$detected_version" "$MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41"; then
+                echo "$MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41"
+                return
+            fi
+            ;;
+    esac
+
+    echo "$detected_version"
+}
+
 build_native_modules() {
     local app_extracted="$1"
 
     # Read versions from extracted app
-    local bs3_ver npty_ver
+    local bs3_ver bs3_build_ver npty_ver
     bs3_ver=$(node -p "require('$app_extracted/node_modules/better-sqlite3/package.json').version" 2>/dev/null || echo "")
     npty_ver=$(node -p "require('$app_extracted/node_modules/node-pty/package.json').version" 2>/dev/null || echo "")
 
@@ -410,6 +430,10 @@ build_native_modules() {
     [ -n "$npty_ver" ] || error "Could not detect node-pty version"
 
     info "Native modules: better-sqlite3@$bs3_ver, node-pty@$npty_ver"
+    bs3_build_ver="$(better_sqlite3_build_version "$bs3_ver")"
+    if [ "$bs3_build_ver" != "$bs3_ver" ]; then
+        warn "Using better-sqlite3@$bs3_build_ver for Electron v$ELECTRON_VERSION compatibility (DMG has $bs3_ver)"
+    fi
 
     # Build in a CLEAN directory (asar doesn't have full source)
     local build_dir="$WORK_DIR/native-build"
@@ -420,7 +444,7 @@ build_native_modules() {
 
     info "Installing fresh sources from npm..."
     npm install "electron@$ELECTRON_VERSION" --save-dev --ignore-scripts 2>&1 >&2
-    npm install "better-sqlite3@$bs3_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
+    npm install "better-sqlite3@$bs3_build_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
     npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force 2>&1 >&2
@@ -480,9 +504,22 @@ download_electron() {
         *)       error "Unsupported architecture: $ARCH" ;;
     esac
 
-    local url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+    local electron_zip="electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+    local url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${electron_zip}"
+    local electron_cache_dir="${CODEX_ELECTRON_CACHE_DIR:-$HOME/.cache/codex-desktop/electron}"
+    local cached_zip="$electron_cache_dir/$electron_zip"
+    local partial_zip="$cached_zip.part"
 
-    curl -L --progress-bar -o "$WORK_DIR/electron.zip" "$url"
+    mkdir -p "$electron_cache_dir"
+    if [ ! -f "$cached_zip" ]; then
+        info "Downloading $electron_zip into cache..."
+        curl -L --fail --continue-at - --progress-bar -o "$partial_zip" "$url"
+        mv "$partial_zip" "$cached_zip"
+    else
+        info "Using cached Electron archive: $cached_zip"
+    fi
+
+    cp "$cached_zip" "$WORK_DIR/electron.zip"
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     unzip -qo "$WORK_DIR/electron.zip"
