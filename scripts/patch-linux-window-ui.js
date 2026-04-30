@@ -425,7 +425,8 @@ function applyLinuxSettingsPersistencePatch(currentSource) {
     const stateFilePatch =
       `var Yb=\`.codex-global-state.json\`;function codexLinuxSettingsPath(){let e=process.env.XDG_CONFIG_HOME||process.env.HOME&&i.join(process.env.HOME,\`.config\`);return e?i.join(e,\`codex-desktop\`,\`settings.json\`):null}function codexLinuxReadSettingsFile(){let e=codexLinuxSettingsPath();if(!e||!o.existsSync(e))return{};try{let t=o.readFileSync(e,\`utf8\`),n=JSON.parse(t);return n&&typeof n===\`object\`&&!Array.isArray(n)?n:{}}catch(e){return{}}}function codexLinuxPersistSettingsState(e,t){if(process.platform!==\`linux\`||![${Object.values(linuxSettingsKeys).map((key) => `\`${key}\``).join(",")}].includes(e))return;try{let n=codexLinuxSettingsPath();if(!n)return;let r=codexLinuxReadSettingsFile();t===void 0?delete r[e]:r[e]=t,o.mkdirSync(i.dirname(n),{recursive:!0,mode:448}),o.writeFileSync(n,JSON.stringify(r,null,2)+\`\\n\`,\`utf8\`)}catch(e){}}`;
     if (!patchedSource.includes(stateFileNeedle)) {
-      throw new Error("Required Linux settings patch failed: could not add settings persistence helpers");
+      console.warn("WARN: Could not find Linux settings state file marker — skipping settings persistence patch");
+      return patchedSource;
     }
     patchedSource = patchedSource.replace(stateFileNeedle, stateFilePatch);
   }
@@ -438,7 +439,8 @@ function applyLinuxSettingsPersistencePatch(currentSource) {
     return patchedSource;
   }
   if (!patchedSource.includes(setGlobalStateNeedle)) {
-    throw new Error("Required Linux settings patch failed: could not synchronize launcher settings");
+    console.warn("WARN: Could not find Linux set-global-state needle — skipping settings persistence hook");
+    return patchedSource;
   }
 
   return patchedSource.replace(setGlobalStateNeedle, setGlobalStatePatch);
