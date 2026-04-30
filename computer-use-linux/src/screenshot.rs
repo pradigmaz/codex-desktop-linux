@@ -20,6 +20,8 @@ pub struct ScreenshotCapture {
     pub mime_type: String,
     pub data_url: String,
     pub source: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
@@ -155,13 +157,29 @@ async fn read_png_as_capture(path: PathBuf, source: &str) -> Result<ScreenshotCa
     if bytes.is_empty() {
         bail!("screenshot file was empty: {}", path.display());
     }
+    let (width, height) = png_dimensions(&bytes)?;
     let encoded = STANDARD.encode(bytes);
     let _ = fs::remove_file(path);
     Ok(ScreenshotCapture {
         mime_type: "image/png".to_string(),
         data_url: format!("data:image/png;base64,{encoded}"),
         source: source.to_string(),
+        width,
+        height,
     })
+}
+
+fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 24 || &bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
+        bail!("screenshot file was not a valid PNG");
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+    let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+    if width == 0 || height == 0 {
+        bail!("screenshot PNG had invalid dimensions {width}x{height}");
+    }
+    Ok((width, height))
 }
 
 fn file_uri_to_path(uri: &str) -> Result<PathBuf> {
@@ -230,5 +248,18 @@ mod tests {
         let token = request_token();
         assert!(token.starts_with("codex_"));
         assert!(token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    }
+
+    #[test]
+    fn reads_png_dimensions_from_ihdr() {
+        let mut png = Vec::new();
+        png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        png.extend_from_slice(&13_u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&3840_u32.to_be_bytes());
+        png.extend_from_slice(&1080_u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+
+        assert_eq!(png_dimensions(&png).unwrap(), (3840, 1080));
     }
 }

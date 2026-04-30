@@ -20,6 +20,7 @@ use std::{
 #[derive(Debug, Clone, Default)]
 pub struct ComputerUseLinux {
     last_nodes: Arc<Mutex<Vec<AccessibilityNode>>>,
+    last_screenshot_size: Arc<Mutex<Option<ScreenSize>>>,
 }
 
 #[tool_router]
@@ -72,7 +73,10 @@ impl ComputerUseLinux {
         let include_screenshot = params.include_screenshot.unwrap_or(true);
         let (screenshot, screenshot_error) = if include_screenshot {
             match capture_screenshot().await {
-                Ok(capture) => (Some(capture), None),
+                Ok(capture) => {
+                    self.cache_screenshot_size(capture.width, capture.height);
+                    (Some(capture), None)
+                }
                 Err(error) => (None, Some(error.to_string())),
             }
         } else {
@@ -154,6 +158,7 @@ impl ComputerUseLinux {
         };
         let button = mouse_button_code(params.button.as_deref());
         let click_count = params.click_count.unwrap_or(1).clamp(1, 10).to_string();
+        let (x, y) = self.to_ydotool_absolute_point(x, y);
         let result = run_ydotool_sequence(&[
             absolute_mousemove_args(x, y),
             vec![
@@ -231,14 +236,10 @@ impl ComputerUseLinux {
         };
         let mut sequence = Vec::new();
         if let Some((x, y)) = target_point {
+            let (x, y) = self.to_ydotool_absolute_point(x, y);
             sequence.push(absolute_mousemove_args(x, y));
         }
-        sequence.push(vec![
-            "mousemove".to_string(),
-            "--wheel".to_string(),
-            dx.to_string(),
-            dy.to_string(),
-        ]);
+        sequence.push(wheel_mousemove_args(dx, dy));
         let result = run_ydotool_sequence(&sequence);
         Json(action_result("scroll", result, received))
     }
@@ -249,10 +250,12 @@ impl ComputerUseLinux {
     )]
     fn drag(&self, Parameters(params): Parameters<DragParams>) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
+        let (start_x, start_y) = self.to_ydotool_absolute_point(params.start_x, params.start_y);
+        let (end_x, end_y) = self.to_ydotool_absolute_point(params.end_x, params.end_y);
         let result = run_ydotool_sequence(&[
-            absolute_mousemove_args(params.start_x, params.start_y),
+            absolute_mousemove_args(start_x, start_y),
             vec!["click".to_string(), "0x40".to_string()],
-            absolute_mousemove_args(params.end_x, params.end_y),
+            absolute_mousemove_args(end_x, end_y),
             vec!["click".to_string(), "0x80".to_string()],
         ]);
         Json(action_result("drag", result, received))
@@ -410,6 +413,12 @@ struct TypeTextParams {
     text: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScreenSize {
+    width: u32,
+    height: u32,
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct ActionOutput {
     ok: bool,
@@ -439,6 +448,30 @@ impl ComputerUseLinux {
             cached.clear();
             cached.extend_from_slice(nodes);
         }
+    }
+
+    fn cache_screenshot_size(&self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        if let Ok(mut cached) = self.last_screenshot_size.lock() {
+            *cached = Some(ScreenSize { width, height });
+        }
+    }
+
+    fn to_ydotool_absolute_point(&self, x: i32, y: i32) -> (i32, i32) {
+        let Some(size) = self
+            .last_screenshot_size
+            .lock()
+            .ok()
+            .and_then(|cached| *cached)
+        else {
+            return (x, y);
+        };
+        (
+            pixel_to_ydotool_absolute(x, size.width),
+            pixel_to_ydotool_absolute(y, size.height),
+        )
     }
 
     fn resolve_target_point(
@@ -485,6 +518,16 @@ impl ComputerUseLinux {
     }
 }
 
+fn pixel_to_ydotool_absolute(value: i32, extent: u32) -> i32 {
+    if extent <= 1 {
+        return value;
+    }
+    let max_pixel = extent as i32 - 1;
+    let clamped = value.clamp(0, max_pixel) as i64;
+    let max_pixel = max_pixel as i64;
+    ((clamped * 65_535 + max_pixel / 2) / max_pixel) as i32
+}
+
 fn action_result(
     action: &str,
     result: std::result::Result<Vec<Output>, String>,
@@ -515,6 +558,16 @@ fn absolute_mousemove_args(x: i32, y: i32) -> Vec<String> {
         "--".to_string(),
         x.to_string(),
         y.to_string(),
+    ]
+}
+
+fn wheel_mousemove_args(dx: i32, dy: i32) -> Vec<String> {
+    vec![
+        "mousemove".to_string(),
+        "--wheel".to_string(),
+        "--".to_string(),
+        dx.to_string(),
+        dy.to_string(),
     ]
 }
 
@@ -853,6 +906,28 @@ mod tests {
                 "300".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn wheel_mousemove_uses_coordinate_separator_for_negative_values() {
+        assert_eq!(
+            wheel_mousemove_args(0, -3),
+            vec![
+                "mousemove".to_string(),
+                "--wheel".to_string(),
+                "--".to_string(),
+                "0".to_string(),
+                "-3".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn screenshot_pixels_normalize_to_ydotool_absolute_space() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_screenshot_size(3840, 1080);
+
+        assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (26460, 56485));
     }
 
     #[test]
