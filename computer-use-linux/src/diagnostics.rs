@@ -323,10 +323,20 @@ fn ydotool_socket_path() -> PathBuf {
     if let Some(value) = env_var("YDOTOOL_SOCKET") {
         return PathBuf::from(value);
     }
-    if let Some(runtime) = xdg_runtime_dir() {
-        return runtime.join(".ydotool_socket");
+
+    let runtime_socket = xdg_runtime_dir().map(|runtime| runtime.join(".ydotool_socket"));
+    let tmp_socket = PathBuf::from("/tmp/.ydotool_socket");
+
+    for candidate in [runtime_socket.as_ref(), Some(&tmp_socket)]
+        .into_iter()
+        .flatten()
+    {
+        if candidate.exists() {
+            return candidate.to_path_buf();
+        }
     }
-    PathBuf::from("/tmp/.ydotool_socket")
+
+    runtime_socket.unwrap_or(tmp_socket)
 }
 
 fn user_id() -> Option<String> {

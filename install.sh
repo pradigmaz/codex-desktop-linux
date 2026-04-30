@@ -19,6 +19,8 @@ fi
 INSTALL_DIR="${CODEX_INSTALL_DIR:-$INSTALL_ROOT/$DEFAULT_INSTALL_DIR_NAME}"
 CODEX_WEBVIEW_PORT="${CODEX_WEBVIEW_PORT:-$DEFAULT_CODEX_WEBVIEW_PORT}"
 ELECTRON_VERSION="41.3.0"
+ELECTRON_HEADERS_URL="${ELECTRON_HEADERS_URL:-${npm_config_disturl:-${NPM_CONFIG_DISTURL:-https://artifacts.electronjs.org/headers/dist}}}"
+ELECTRON_MIRROR="${ELECTRON_MIRROR:-}"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
 ICON_SOURCE="$SCRIPT_DIR/assets/codex.png"
@@ -79,6 +81,11 @@ Environment variables:
   CODEX_APP_DISPLAY_NAME
                       Override display name (default: Codex Desktop)
   CODEX_WEBVIEW_PORT  Override webview HTTP port (default: 5175, or 5176 for non-default app ids)
+  ELECTRON_HEADERS_URL
+                      Override the Electron headers URL used by @electron/rebuild
+                      (default: https://artifacts.electronjs.org/headers/dist)
+  ELECTRON_MIRROR     Override the Electron runtime download mirror root
+                      (example: https://npmmirror.com/mirrors/electron/)
 
 After install, launch with:
   ./codex-app/start.sh
@@ -423,7 +430,10 @@ build_native_modules() {
     npm install "better-sqlite3@$bs3_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
-    npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force 2>&1 >&2
+    info "Using Electron headers: $ELECTRON_HEADERS_URL"
+    npm_config_disturl="$ELECTRON_HEADERS_URL" \
+    NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
+    npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" 2>&1 >&2
 
     info "Native modules built successfully"
 
@@ -480,7 +490,13 @@ download_electron() {
         *)       error "Unsupported architecture: $ARCH" ;;
     esac
 
-    local url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+    local url
+    if [ -n "$ELECTRON_MIRROR" ]; then
+        url="${ELECTRON_MIRROR%/}/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+        info "Using Electron runtime mirror: ${ELECTRON_MIRROR%/}"
+    else
+        url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
+    fi
 
     curl -L --progress-bar -o "$WORK_DIR/electron.zip" "$url"
     mkdir -p "$INSTALL_DIR"

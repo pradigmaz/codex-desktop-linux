@@ -68,6 +68,8 @@ Linux Computer Use is an **opt-in** plugin that lets Codex inspect and control d
 ```bash
 # Debian / Ubuntu
 sudo apt install ydotool
+# Some Ubuntu releases package the daemon separately:
+sudo apt install ydotoold
 
 # Fedora
 sudo dnf install ydotool
@@ -85,6 +87,8 @@ sudo zypper install ydotool
 sudo systemctl enable --now ydotoold
 sudo usermod -a -G input "$USER"
 ```
+
+On Ubuntu 24.04, the `ydotoold` package may install `/usr/bin/ydotoold` without a systemd unit. In that case, create or install a `ydotoold.service` unit before running `systemctl enable --now ydotoold`.
 
 A working XDG Desktop Portal implementation is needed if you are not on GNOME — `xdg-desktop-portal-kde` for KDE Plasma, `xdg-desktop-portal-wlr` for sway / Hyprland. GNOME ships a working portal by default.
 
@@ -231,6 +235,17 @@ If `npm i -g` needs elevated privileges on your system:
 npm i -g --prefix ~/.local @openai/codex
 ```
 
+### Electron download mirrors
+
+`make build-app` downloads Electron headers while rebuilding native modules, then downloads a Linux Electron runtime. The installer uses Electron's `artifacts.electronjs.org` headers endpoint by default so `@electron/rebuild` does not need to connect to `www.electronjs.org`. If the later runtime download from GitHub is slow or blocked, use an Electron runtime mirror:
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+make build-app
+```
+
+`ELECTRON_HEADERS_URL` is passed to `@electron/rebuild --dist-url`. It must provide both `node-v<version>-headers.tar.gz` and the matching `SHASUMS256.txt`; ordinary Electron runtime mirrors may not include the headers checksum format that `node-gyp` expects.
+
 ## Native package formats
 
 After `make build-app`, build a native package from `codex-app/` with the format you need:
@@ -298,6 +313,7 @@ make clean-state
 | Stale install / cached DMG | `./install.sh --fresh` removes the existing install dir and re-downloads |
 | Computer Use plugin invisible in UI | Most likely the OpenAI per-account Statsig rollout (`computerUse` feature flag) hasn't been enabled for your account. Building / reinstalling does not change this |
 | Computer Use `doctor` reports `ydotool not running` | `sudo systemctl enable --now ydotoold` and add your user to the `input` group |
+| `ConnectTimeoutError` for `www.electronjs.org` during `@electron/rebuild` | Re-run `make build-app`; the installer now uses `https://artifacts.electronjs.org/headers/dist` for Electron headers by default |
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup` to flip GNOME accessibility on, then restart the target app |
 | `codex-update-manager` keeps running after package removal | `systemctl --user disable --now codex-update-manager.service` once in the affected session, then confirm `/opt/codex-desktop` is gone |
 
