@@ -11,9 +11,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zbus::{
+    message::{Message, Type as MessageType},
     zvariant::{OwnedObjectPath, OwnedValue, Value},
-    Proxy,
+    MatchRule, MessageStream, Proxy,
 };
+
+const PORTAL_REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
+const PORTAL_REQUEST_PATH_NAMESPACE: &str = "/org/freedesktop/portal/desktop/request";
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ScreenshotCapture {
@@ -86,30 +90,10 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
     let connection = zbus::Connection::session()
         .await
         .context("failed to connect to session bus")?;
-    let unique_name = connection
-        .unique_name()
-        .context("session bus connection has no unique name")?;
     let token = request_token();
-    let request_path = format!(
-        "/org/freedesktop/portal/desktop/request/{}/{}",
-        unique_name
-            .as_str()
-            .trim_start_matches(':')
-            .replace('.', "_"),
-        token
-    );
-    let request_proxy = Proxy::new(
-        &connection,
-        "org.freedesktop.portal.Desktop",
-        request_path.as_str(),
-        "org.freedesktop.portal.Request",
-    )
-    .await
-    .context("failed to create XDG portal request proxy")?;
-    let mut response_stream = request_proxy
-        .receive_signal("Response")
-        .await
-        .context("failed to subscribe to XDG portal screenshot response")?;
+    // Some portals rewrite the request handle, so subscribe before calling Screenshot
+    // and filter by the returned handle instead of subscribing after the call.
+    let mut response_stream = portal_response_stream(&connection).await?;
 
     let portal_proxy = Proxy::new(
         &connection,
@@ -127,28 +111,12 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
         .await
         .context("XDG portal Screenshot call failed")?;
 
-    if handle.as_str() != request_path {
-        response_stream = Proxy::new(
-            &connection,
-            "org.freedesktop.portal.Desktop",
-            handle.as_str(),
-            "org.freedesktop.portal.Request",
-        )
-        .await
-        .context("failed to create returned XDG portal request proxy")?
-        .receive_signal("Response")
-        .await
-        .context("failed to subscribe to returned XDG portal screenshot response")?;
-    }
-
-    let response = tokio::time::timeout(Duration::from_secs(20), response_stream.next())
-        .await
-        .context("timed out waiting for XDG portal screenshot response")?
-        .context("XDG portal screenshot response stream ended")?;
-    let (response_code, results): (u32, HashMap<String, OwnedValue>) = response
-        .body()
-        .deserialize()
-        .context("failed to decode XDG portal screenshot response")?;
+    let (response_code, results) = tokio::time::timeout(
+        Duration::from_secs(20),
+        wait_for_portal_response(&mut response_stream, handle.as_str()),
+    )
+    .await
+    .context("timed out waiting for XDG portal screenshot response")??;
 
     if response_code != 0 {
         bail!("XDG portal screenshot was denied or cancelled with response code {response_code}");
@@ -165,6 +133,48 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
     let path = file_uri_to_path(&uri)?;
 
     read_png_as_capture(path, "xdg-desktop-portal", ScreenshotCleanup::Preserve).await
+}
+
+async fn portal_response_stream(connection: &zbus::Connection) -> Result<MessageStream> {
+    let response_rule = MatchRule::builder()
+        .msg_type(MessageType::Signal)
+        .interface(PORTAL_REQUEST_INTERFACE)?
+        .member("Response")?
+        .path_namespace(PORTAL_REQUEST_PATH_NAMESPACE)?
+        .build();
+
+    MessageStream::for_match_rule(response_rule, connection, None)
+        .await
+        .context("failed to subscribe to XDG portal screenshot responses")
+}
+
+async fn wait_for_portal_response(
+    response_stream: &mut MessageStream,
+    request_path: &str,
+) -> Result<(u32, HashMap<String, OwnedValue>)> {
+    loop {
+        let response = response_stream
+            .next()
+            .await
+            .context("XDG portal screenshot response stream ended")?
+            .context("XDG portal screenshot response stream failed")?;
+
+        if !portal_response_matches_path(&response, request_path) {
+            continue;
+        }
+
+        return response
+            .body()
+            .deserialize()
+            .context("failed to decode XDG portal screenshot response");
+    }
+}
+
+fn portal_response_matches_path(response: &Message, request_path: &str) -> bool {
+    response
+        .header()
+        .path()
+        .is_some_and(|path| path.as_str() == request_path)
 }
 
 async fn read_png_as_capture(
