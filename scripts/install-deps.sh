@@ -201,6 +201,19 @@ detect_distro() {
     fi
 }
 
+preferred_gui_prompt_package() {
+    local desktop="${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-}}"
+    desktop="$(printf '%s' "$desktop" | tr '[:upper:]' '[:lower:]')"
+    case "$desktop" in
+        *kde*|*plasma*)
+            echo "kdialog"
+            ;;
+        *)
+            echo "zenity"
+            ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # Install helpers
 # ---------------------------------------------------------------------------
@@ -245,6 +258,29 @@ install_zypper() {
         nodejs-default npm-default python3 \
         p7zip-full curl unzip
     sudo zypper --non-interactive install -t pattern devel_basis
+}
+
+install_gui_prompt_helper() {
+    local package
+    package="$(preferred_gui_prompt_package)"
+
+    case "$DISTRO" in
+        apt)
+            sudo apt-get install -y "$package"
+            ;;
+        dnf5)
+            sudo dnf install -y "$package"
+            ;;
+        dnf)
+            sudo dnf install -y "$package"
+            ;;
+        pacman)
+            sudo pacman -S --needed --noconfirm "$package"
+            ;;
+        zypper)
+            sudo zypper --non-interactive install "$package"
+            ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -378,5 +414,6 @@ esac
 ensure_nodejs_compatible "$DISTRO"
 install_rust
 bootstrap_7zz
+install_gui_prompt_helper
 
 info "All dependencies installed. You can now run: ./install.sh"

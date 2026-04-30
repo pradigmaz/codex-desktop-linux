@@ -91,7 +91,7 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 - Launcher and `nvm`:
   GUI launchers often do not inherit the user's shell `PATH`. The generated `start.sh` explicitly searches for `codex`, including common `nvm` locations.
 - CLI preflight:
-  Before Electron launches, the generated launcher asks `codex-update-manager` to verify the installed Codex CLI, install it automatically if it is missing, and update it if the npm package is newer. The check is best-effort: it uses a 1-hour cooldown for npm registry lookups, falls back to `npm install -g --prefix ~/.local` if a global install fails, and warns instead of blocking app launch when the refresh attempt does not succeed.
+  Before Electron launches, the generated launcher asks `codex-update-manager` to verify the installed Codex CLI, prompt to install it when it is missing, and update it if the npm package is newer. Terminal launches prompt inline; GUI launches prefer `kdialog` on KDE/Plasma, otherwise `zenity`, before falling back to an actionable desktop notification. The check is best-effort: it uses a 1-hour cooldown for npm registry lookups, caches local CLI version reads to keep startup light, falls back to `npm install -g --prefix ~/.local` if a global install fails, and warns instead of blocking app launch when the refresh attempt does not succeed.
 - ASAR patches are independent and fail-soft:
   `scripts/patch-linux-window-ui.js` is structured as a chain of small, independent patch functions called from `patchMainBundleSource`. Each one has its own regex-driven needles, an idempotency check, and a `console.warn` fall-back when the upstream bundle drifts. Current patches: `applyLinuxWindowOptionsPatch`, `applyLinuxMenuPatch`, `applyLinuxSetIconPatch`, `applyLinuxOpaqueBackgroundPatch`, `applyLinuxFileManagerPatch`, `applyLinuxTrayPatch`, `applyLinuxSingleInstancePatch`, `applyLinuxComputerUsePluginGatePatch`, `applyLinuxTrayCloseSettingPatch`, `applyLinuxSettingsPersistencePatch`, `applyLinuxLaunchActionArgsPatch`, `applyLinuxHotkeyWindowPrewarmPatch`, `applyBrowserAnnotationScreenshotPatch`. Plus `patchKeybindsSettingsAssets` (transactional — atomic, fail-soft via `WARN: Keybinds settings patch skipped: ...`) and `patchCommentPreloadBundle` for browser annotation fixes. When adding a new needle, mirror this pattern — never `throw`.
 - Linux file manager integration:
@@ -132,7 +132,7 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 
 ## Crate Versioning
 
-- Current updater crate version: `0.5.0`
+- Current updater crate version: `0.6.0`
 - Bump `patch` for fixes, docs, and maintenance-only updates.
 - Bump `minor` for compatible feature additions.
 - Bump `major` for incompatible CLI, persisted-state, or install-flow changes.

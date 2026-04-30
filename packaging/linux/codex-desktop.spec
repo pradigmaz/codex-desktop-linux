@@ -10,6 +10,7 @@ Requires:       alsa-lib, at-spi2-atk, atk, glib2, gtk3, libdrm
 Requires:       nspr, nss, pango, libstdc++, libX11, libxcb
 Requires:       libXcomposite, libXdamage, libXext, libXfixes, libxkbcommon, libXrandr
 Requires:       mesa-libgbm
+Recommends:     zenity, kdialog
 
 %description
 Community-built Linux package for Codex Desktop generated from the macOS DMG.

@@ -343,6 +343,11 @@ PLIST
 
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
+    assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
+    assert_contains "$REPO_DIR/install.sh" "MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41=\"12.9.0\""
+    assert_contains "$REPO_DIR/install.sh" "better_sqlite3_build_version"
+    assert_contains "$REPO_DIR/install.sh" "CODEX_ELECTRON_CACHE_DIR"
+    assert_contains "$REPO_DIR/install.sh" "--continue-at -"
     assert_contains "$REPO_DIR/install.sh" 'python3 -m http.server "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
     assert_contains "$REPO_DIR/install.sh" "WEBVIEW_PID_FILE"
     assert_contains "$REPO_DIR/install.sh" "owned_webview_server_pid"
@@ -419,13 +424,17 @@ PY
     assert_contains "$REPO_DIR/install.sh" "--disable-gpu-sandbox"
     assert_contains "$REPO_DIR/install.sh" "--force-renderer-accessibility"
     assert_contains "$REPO_DIR/install.sh" "PACKAGED_RUNTIME_HELPER"
+    assert_contains "$REPO_DIR/install.sh" "--allow-install-missing"
     assert_contains "$REPO_DIR/install.sh" "CODEX_INSTALL_ALLOW_RUNNING"
     assert_contains "$REPO_DIR/install.sh" "assert_install_target_not_running"
     assert_contains "$REPO_DIR/install.sh" "find_running_install_target_pid"
     assert_contains "$REPO_DIR/install.sh" "Codex Desktop is currently running from"
     assert_contains "$REPO_DIR/install.sh" "prompt_install_missing_cli"
+    assert_contains "$REPO_DIR/install.sh" "prompt-install-cli"
     assert_contains "$REPO_DIR/install.sh" "Install it now? \\[Y/n\\]"
     assert_contains "$REPO_DIR/install.sh" "is_interactive_terminal"
+    assert_contains "$REPO_DIR/updater/src/app.rs" "kdialog"
+    assert_contains "$REPO_DIR/updater/src/app.rs" "zenity"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "CHROME_DESKTOP"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "codex-update-manager-launch-check"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "codex-update-manager check-now --if-stale"

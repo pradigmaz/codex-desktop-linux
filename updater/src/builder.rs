@@ -289,7 +289,22 @@ fn build_command_path() -> OsString {
     entries.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
+    entries.extend(system_bin_dirs());
     std::env::join_paths(entries).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn system_bin_dirs() -> Vec<PathBuf> {
+    [
+        "/usr/local/sbin",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
 }
 
 fn preferred_node_bin_dirs() -> Vec<PathBuf> {
@@ -462,6 +477,34 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             "[Unit]\nDescription=Codex Update Manager\n",
         )?;
         fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager-user-service.sh"),
+            "#!/bin/bash\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.postinst"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.prerm"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-update-manager.postrm"),
+            "#!/bin/sh\nexit 0\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-packaged-runtime.sh"),
+            "#!/bin/bash\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/PKGBUILD.template"),
+            "pkgname=codex\n",
+        )?;
+        fs::write(
+            bundle_root.join("packaging/linux/codex-desktop.install"),
+            "post_install() { :; }\n",
+        )?;
+        fs::write(
             bundle_root.join("install.sh"),
             r#"#!/bin/bash
 set -euo pipefail
@@ -632,5 +675,14 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         assert_eq!(directories.first(), Some(&current_bin));
         assert!(directories.contains(&version_bin));
         Ok(())
+    }
+
+    #[test]
+    fn build_command_path_includes_system_dirs() {
+        let path = build_command_path();
+        let directories = std::env::split_paths(&path).collect::<Vec<_>>();
+
+        assert!(directories.iter().any(|dir| dir == Path::new("/usr/bin")));
+        assert!(directories.iter().any(|dir| dir == Path::new("/bin")));
     }
 }

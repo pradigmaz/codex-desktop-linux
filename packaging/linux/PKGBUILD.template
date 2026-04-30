@@ -39,6 +39,10 @@ depends=(
     'nss'
     'pango'
 )
+optdepends=(
+    'zenity: GTK dialog fallback when the Codex CLI is missing'
+    'kdialog: KDE dialog fallback when the Codex CLI is missing'
+)
 options=(!debug !strip)
 install=__PACKAGE_NAME__.install
 source=()

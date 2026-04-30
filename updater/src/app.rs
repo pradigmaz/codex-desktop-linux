@@ -14,15 +14,20 @@ use chrono::{Duration as ChronoDuration, Utc};
 use fs4::fs_std::FileExt;
 use reqwest::Client;
 use std::{
+    ffi::OsString,
     fs::{self, OpenOptions},
     io::{Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    process::Command,
 };
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
 const RECONCILE_INTERVAL_SECONDS: u64 = 15;
 const CLI_MISSING_NOTIFICATION_EVENT: &str = "cli_missing";
+const CLI_MISSING_PROMPT_DISMISS_TTL: ChronoDuration = ChronoDuration::minutes(10);
+const PROMPT_INSTALL_CLI_CANCELLED_EXIT_CODE: i32 = 10;
+const PROMPT_INSTALL_CLI_NO_BACKEND_EXIT_CODE: i32 = 11;
 
 /// Runs the updater command-line entrypoint.
 pub async fn run(cli: Cli) -> Result<()> {
@@ -33,8 +38,9 @@ pub async fn run(cli: Cli) -> Result<()> {
     let config = RuntimeConfig::load_or_default(&paths)?;
     let mut state =
         PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
+    let original_state = state.clone();
     state.installed_version = install::installed_package_version();
-    state.save(&paths.state_file)?;
+    persist_if_changed(&paths, &state, &original_state)?;
 
     match cli.command {
         Commands::Daemon => run_daemon(&config, &mut state, &paths).await,
@@ -52,6 +58,10 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_path,
             allow_install_missing,
         ),
+        Commands::PromptInstallCli {
+            cli_path,
+            print_path,
+        } => run_prompt_install_cli(&mut state, &paths, cli_path, print_path),
         Commands::Status { json } => run_status(&mut state, &paths, json),
         Commands::InstallDeb { path } => install::install_deb(&path),
         Commands::InstallRpm { path } => install::install_rpm(&path),
@@ -61,6 +71,18 @@ pub async fn run(cli: Cli) -> Result<()> {
 
 fn persist_state(paths: &RuntimePaths, state: &PersistedState) -> Result<()> {
     state.save(&paths.state_file)
+}
+
+fn persist_if_changed(
+    paths: &RuntimePaths,
+    state: &PersistedState,
+    original_state: &PersistedState,
+) -> Result<()> {
+    if state != original_state {
+        persist_state(paths, state)?;
+    }
+
+    Ok(())
 }
 
 fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
@@ -73,8 +95,9 @@ fn sync_and_persist(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    let original_state = state.clone();
     sync_runtime_state(config, state);
-    persist_state(paths, state)
+    persist_if_changed(paths, state, &original_state)
 }
 
 fn set_status(
@@ -162,7 +185,7 @@ async fn run_daemon(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::refresh_status(state, paths)?;
+    codex_cli::refresh_cached_status(state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if packaged_runtime_removed(config) {
@@ -220,7 +243,7 @@ async fn run_check_now(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::refresh_status(state, paths)?;
+    codex_cli::refresh_cached_status(state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if if_stale && upstream_check_is_fresh(config, state) {
@@ -270,6 +293,29 @@ fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> R
     Ok(())
 }
 
+fn run_prompt_install_cli(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    cli_path: Option<PathBuf>,
+    print_path: bool,
+) -> Result<()> {
+    let outcome = prompt_install_cli(state, paths, cli_path)?;
+    match outcome {
+        PromptInstallCliOutcome::Installed(path) => {
+            if print_path {
+                println!("{}", path.display());
+            }
+            std::process::exit(0);
+        }
+        PromptInstallCliOutcome::Cancelled => {
+            std::process::exit(PROMPT_INSTALL_CLI_CANCELLED_EXIT_CODE);
+        }
+        PromptInstallCliOutcome::NoBackend => {
+            std::process::exit(PROMPT_INSTALL_CLI_NO_BACKEND_EXIT_CODE);
+        }
+    }
+}
+
 fn run_cli_preflight(
     state: &mut PersistedState,
     paths: &RuntimePaths,
@@ -282,6 +328,149 @@ fn run_cli_preflight(
         println!("{}", outcome.cli_path.display());
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PromptInstallCliOutcome {
+    Installed(PathBuf),
+    Cancelled,
+    NoBackend,
+}
+
+fn prompt_install_cli(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    cli_path: Option<PathBuf>,
+) -> Result<PromptInstallCliOutcome> {
+    if let Some(path) = cli_path
+        .as_deref()
+        .and_then(|path| codex_cli::resolve_cli_path(Some(path)))
+        .or_else(|| {
+            state
+                .cli_path
+                .as_deref()
+                .and_then(|path| codex_cli::resolve_cli_path(Some(path)))
+        })
+        .or_else(|| codex_cli::resolve_cli_path(None))
+    {
+        return Ok(PromptInstallCliOutcome::Installed(path));
+    }
+
+    if recently_dismissed_cli_prompt(state) {
+        return Ok(PromptInstallCliOutcome::Cancelled);
+    }
+
+    if !has_graphical_session() {
+        return Ok(PromptInstallCliOutcome::NoBackend);
+    }
+
+    let consent = if prefers_kdialog() && command_in_path("kdialog").is_some() {
+        run_kdialog_prompt()?
+    } else if command_in_path("zenity").is_some() {
+        run_zenity_prompt()?
+    } else if command_in_path("kdialog").is_some() {
+        run_kdialog_prompt()?
+    } else {
+        run_actionable_notification_prompt()?
+    };
+
+    if !consent {
+        state.cli_prompt_dismissed_at = Some(Utc::now());
+        persist_state(paths, state)?;
+        return Ok(PromptInstallCliOutcome::Cancelled);
+    }
+
+    state.cli_prompt_dismissed_at = None;
+    let outcome = codex_cli::preflight(state, paths, cli_path, true)?;
+    Ok(PromptInstallCliOutcome::Installed(outcome.cli_path))
+}
+
+fn recently_dismissed_cli_prompt(state: &PersistedState) -> bool {
+    state.cli_prompt_dismissed_at.is_some_and(|dismissed_at| {
+        Utc::now().signed_duration_since(dismissed_at) < CLI_MISSING_PROMPT_DISMISS_TTL
+    })
+}
+
+fn has_graphical_session() -> bool {
+    let has_display =
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let has_dbus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
+        || std::env::var_os("XDG_RUNTIME_DIR").is_some();
+    has_display && has_dbus
+}
+
+fn prefers_kdialog() -> bool {
+    desktop_tokens().iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "kde" | "plasma" | "plasmawayland" | "plasmax11"
+        )
+    })
+}
+
+fn desktop_tokens() -> Vec<String> {
+    [
+        std::env::var("XDG_CURRENT_DESKTOP").ok(),
+        std::env::var("DESKTOP_SESSION").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .flat_map(|value| {
+        value
+            .split(':')
+            .map(|segment| segment.trim().to_ascii_lowercase())
+            .collect::<Vec<_>>()
+    })
+    .filter(|token| !token.is_empty())
+    .collect()
+}
+
+fn command_in_path(name: &str) -> Option<PathBuf> {
+    let path_env = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(""));
+    std::env::split_paths(&path_env).find_map(|entry| {
+        let candidate = entry.join(name);
+        if candidate.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
+    })
+}
+
+fn run_kdialog_prompt() -> Result<bool> {
+    let status = Command::new("kdialog")
+        .args([
+            "--title",
+            "Codex Desktop",
+            "--yesno",
+            "Codex CLI is not installed. Install it now?",
+        ])
+        .status()
+        .context("Failed to launch kdialog")?;
+    Ok(status.success())
+}
+
+fn run_zenity_prompt() -> Result<bool> {
+    let status = Command::new("zenity")
+        .args([
+            "--question",
+            "--title=Codex Desktop",
+            "--text=Codex CLI is not installed. Install it now?",
+        ])
+        .status()
+        .context("Failed to launch zenity")?;
+    Ok(status.success())
+}
+
+fn run_actionable_notification_prompt() -> Result<bool> {
+    match notify::send_actionable(
+        "Codex CLI not installed",
+        "Codex Desktop needs the Codex CLI. Choose Install now to let Codex Desktop install it.",
+        &[("install", "Install now"), ("dismiss", "Dismiss")],
+    )? {
+        notify::ActionResponse::Invoked(action) if action == "install" => Ok(true),
+        _ => Ok(false),
+    }
 }
 
 async fn run_check_cycle(
@@ -935,13 +1124,14 @@ mod tests {
         };
         paths.ensure_dirs()?;
 
-        let first_lock = try_acquire_check_lock(&paths)?;
-        let second_lock = try_acquire_check_lock(&paths)?;
+        {
+            let first_lock = try_acquire_check_lock(&paths)?;
+            let second_lock = try_acquire_check_lock(&paths)?;
 
-        assert!(first_lock.is_some());
-        assert!(second_lock.is_none());
+            assert!(first_lock.is_some());
+            assert!(second_lock.is_none());
+        }
 
-        drop(first_lock);
         let reacquired_lock = try_acquire_check_lock(&paths)?;
 
         assert!(reacquired_lock.is_some());
@@ -1034,18 +1224,95 @@ mod tests {
     #[test]
     fn pkexec_authentication_failures_are_retryable() -> Result<()> {
         for code in [126, 127] {
-            let status = std::process::Command::new("sh")
+            let status = std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(format!("exit {code}"))
                 .status()?;
             assert!(pkexec_authentication_was_not_obtained(&status));
         }
 
-        let status = std::process::Command::new("sh")
+        let status = std::process::Command::new("/bin/sh")
             .arg("-c")
             .arg("exit 1")
             .status()?;
         assert!(!pkexec_authentication_was_not_obtained(&status));
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_install_cli_does_not_treat_non_executable_file_as_installed() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let original_display = std::env::var_os("DISPLAY");
+        let original_wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+        let original_dbus_session_bus_address = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
+        let original_xdg_runtime_dir = std::env::var_os("XDG_RUNTIME_DIR");
+        let original_path = std::env::var_os("PATH");
+        let original_home = std::env::var_os("HOME");
+        let original_nvm_dir = std::env::var_os("NVM_DIR");
+
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::set_var("HOME", temp.path());
+        std::env::remove_var("NVM_DIR");
+
+        let invalid_cli_path = temp.path().join("codex.txt");
+        std::fs::write(&invalid_cli_path, b"not executable")?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(invalid_cli_path);
+
+        let outcome = prompt_install_cli(&mut state, &paths, None)?;
+
+        if let Some(value) = original_display {
+            std::env::set_var("DISPLAY", value);
+        } else {
+            std::env::remove_var("DISPLAY");
+        }
+        if let Some(value) = original_wayland_display {
+            std::env::set_var("WAYLAND_DISPLAY", value);
+        } else {
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        if let Some(value) = original_dbus_session_bus_address {
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value);
+        } else {
+            std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+        }
+        if let Some(value) = original_xdg_runtime_dir {
+            std::env::set_var("XDG_RUNTIME_DIR", value);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        if let Some(value) = original_path {
+            std::env::set_var("PATH", value);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_nvm_dir {
+            std::env::set_var("NVM_DIR", value);
+        } else {
+            std::env::remove_var("NVM_DIR");
+        }
+
+        assert_eq!(outcome, PromptInstallCliOutcome::NoBackend);
         Ok(())
     }
 
