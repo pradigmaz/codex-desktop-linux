@@ -7,13 +7,17 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zbus::{
+    message::{Message, Type as MessageType},
     zvariant::{OwnedObjectPath, OwnedValue, Value},
-    Proxy,
+    MatchRule, MessageStream, Proxy,
 };
+
+const PORTAL_REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
+const PORTAL_REQUEST_PATH_NAMESPACE: &str = "/org/freedesktop/portal/desktop/request";
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ScreenshotCapture {
@@ -22,6 +26,12 @@ pub struct ScreenshotCapture {
     pub source: String,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScreenshotCleanup {
+    DeletePath(PathBuf),
+    Preserve,
 }
 
 pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
@@ -54,46 +64,36 @@ async fn capture_with_gnome_shell() -> Result<ScreenshotCapture> {
     let filename = path
         .to_str()
         .context("temporary screenshot path is not valid UTF-8")?;
-    let (success, filename_used): (bool, String) = proxy
-        .call("Screenshot", &(false, false, filename))
-        .await
-        .context("GNOME Shell Screenshot call failed")?;
+    let result = proxy.call("Screenshot", &(false, false, filename)).await;
+    let (success, filename_used): (bool, String) = match result {
+        Ok(result) => result,
+        Err(error) => {
+            cleanup_gnome_requested_path(&path);
+            return Err(error).context("GNOME Shell Screenshot call failed");
+        }
+    };
 
     if !success {
+        cleanup_gnome_requested_path(&path);
         bail!("GNOME Shell reported screenshot failure");
     }
 
-    read_png_as_capture(PathBuf::from(filename_used), "gnome-shell").await
+    read_png_as_capture(
+        PathBuf::from(filename_used),
+        "gnome-shell",
+        ScreenshotCleanup::DeletePath(path),
+    )
+    .await
 }
 
 async fn capture_with_portal() -> Result<ScreenshotCapture> {
     let connection = zbus::Connection::session()
         .await
         .context("failed to connect to session bus")?;
-    let unique_name = connection
-        .unique_name()
-        .context("session bus connection has no unique name")?;
     let token = request_token();
-    let request_path = format!(
-        "/org/freedesktop/portal/desktop/request/{}/{}",
-        unique_name
-            .as_str()
-            .trim_start_matches(':')
-            .replace('.', "_"),
-        token
-    );
-    let request_proxy = Proxy::new(
-        &connection,
-        "org.freedesktop.portal.Desktop",
-        request_path.as_str(),
-        "org.freedesktop.portal.Request",
-    )
-    .await
-    .context("failed to create XDG portal request proxy")?;
-    let mut response_stream = request_proxy
-        .receive_signal("Response")
-        .await
-        .context("failed to subscribe to XDG portal screenshot response")?;
+    // Some portals rewrite the request handle, so subscribe before calling Screenshot
+    // and filter by the returned handle instead of subscribing after the call.
+    let mut response_stream = portal_response_stream(&connection).await?;
 
     let portal_proxy = Proxy::new(
         &connection,
@@ -111,28 +111,12 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
         .await
         .context("XDG portal Screenshot call failed")?;
 
-    if handle.as_str() != request_path {
-        response_stream = Proxy::new(
-            &connection,
-            "org.freedesktop.portal.Desktop",
-            handle.as_str(),
-            "org.freedesktop.portal.Request",
-        )
-        .await
-        .context("failed to create returned XDG portal request proxy")?
-        .receive_signal("Response")
-        .await
-        .context("failed to subscribe to returned XDG portal screenshot response")?;
-    }
-
-    let response = tokio::time::timeout(Duration::from_secs(20), response_stream.next())
-        .await
-        .context("timed out waiting for XDG portal screenshot response")?
-        .context("XDG portal screenshot response stream ended")?;
-    let (response_code, results): (u32, HashMap<String, OwnedValue>) = response
-        .body()
-        .deserialize()
-        .context("failed to decode XDG portal screenshot response")?;
+    let (response_code, results) = tokio::time::timeout(
+        Duration::from_secs(20),
+        wait_for_portal_response(&mut response_stream, handle.as_str()),
+    )
+    .await
+    .context("timed out waiting for XDG portal screenshot response")??;
 
     if response_code != 0 {
         bail!("XDG portal screenshot was denied or cancelled with response code {response_code}");
@@ -148,18 +132,71 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
         .context("XDG portal screenshot uri was not a string")?;
     let path = file_uri_to_path(&uri)?;
 
-    read_png_as_capture(path, "xdg-desktop-portal").await
+    read_png_as_capture(path, "xdg-desktop-portal", ScreenshotCleanup::Preserve).await
 }
 
-async fn read_png_as_capture(path: PathBuf, source: &str) -> Result<ScreenshotCapture> {
-    let bytes = fs::read(&path)
+async fn portal_response_stream(connection: &zbus::Connection) -> Result<MessageStream> {
+    let response_rule = MatchRule::builder()
+        .msg_type(MessageType::Signal)
+        .interface(PORTAL_REQUEST_INTERFACE)?
+        .member("Response")?
+        .path_namespace(PORTAL_REQUEST_PATH_NAMESPACE)?
+        .build();
+
+    MessageStream::for_match_rule(response_rule, connection, None)
+        .await
+        .context("failed to subscribe to XDG portal screenshot responses")
+}
+
+async fn wait_for_portal_response(
+    response_stream: &mut MessageStream,
+    request_path: &str,
+) -> Result<(u32, HashMap<String, OwnedValue>)> {
+    loop {
+        let response = response_stream
+            .next()
+            .await
+            .context("XDG portal screenshot response stream ended")?
+            .context("XDG portal screenshot response stream failed")?;
+
+        if !portal_response_matches_path(&response, request_path) {
+            continue;
+        }
+
+        return response
+            .body()
+            .deserialize()
+            .context("failed to decode XDG portal screenshot response");
+    }
+}
+
+fn portal_response_matches_path(response: &Message, request_path: &str) -> bool {
+    response
+        .header()
+        .path()
+        .is_some_and(|path| path.as_str() == request_path)
+}
+
+async fn read_png_as_capture(
+    path: PathBuf,
+    source: &str,
+    cleanup: ScreenshotCleanup,
+) -> Result<ScreenshotCapture> {
+    let result = read_png_as_capture_inner(&path, source);
+    if let ScreenshotCleanup::DeletePath(path) = cleanup {
+        let _ = fs::remove_file(path);
+    }
+    result
+}
+
+fn read_png_as_capture_inner(path: &Path, source: &str) -> Result<ScreenshotCapture> {
+    let bytes = fs::read(path)
         .with_context(|| format!("failed to read screenshot file {}", path.display()))?;
     if bytes.is_empty() {
         bail!("screenshot file was empty: {}", path.display());
     }
     let (width, height) = png_dimensions(&bytes)?;
     let encoded = STANDARD.encode(bytes);
-    let _ = fs::remove_file(path);
     Ok(ScreenshotCapture {
         mime_type: "image/png".to_string(),
         data_url: format!("data:image/png;base64,{encoded}"),
@@ -167,6 +204,10 @@ async fn read_png_as_capture(path: PathBuf, source: &str) -> Result<ScreenshotCa
         width,
         height,
     })
+}
+
+fn cleanup_gnome_requested_path(path: &Path) {
+    let _ = fs::remove_file(path);
 }
 
 fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
@@ -235,6 +276,21 @@ fn unique_suffix() -> String {
 mod tests {
     use super::*;
 
+    fn test_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("codex-screenshot-test-{name}-{}", unique_suffix()))
+    }
+
+    fn valid_png(width: u32, height: u32) -> Vec<u8> {
+        let mut png = Vec::new();
+        png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        png.extend_from_slice(&13_u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&width.to_be_bytes());
+        png.extend_from_slice(&height.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        png
+    }
+
     #[test]
     fn decodes_file_uri_percent_escapes() {
         assert_eq!(
@@ -252,14 +308,109 @@ mod tests {
 
     #[test]
     fn reads_png_dimensions_from_ihdr() {
-        let mut png = Vec::new();
-        png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
-        png.extend_from_slice(&13_u32.to_be_bytes());
-        png.extend_from_slice(b"IHDR");
-        png.extend_from_slice(&3840_u32.to_be_bytes());
-        png.extend_from_slice(&1080_u32.to_be_bytes());
-        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let png = valid_png(3840, 1080);
 
         assert_eq!(png_dimensions(&png).unwrap(), (3840, 1080));
+    }
+
+    #[tokio::test]
+    async fn portal_capture_preserves_valid_returned_path() {
+        let path = test_path("portal-valid");
+        fs::write(&path, valid_png(1, 1)).unwrap();
+
+        let capture = read_png_as_capture(
+            path.clone(),
+            "xdg-desktop-portal",
+            ScreenshotCleanup::Preserve,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(capture.source, "xdg-desktop-portal");
+        assert!(path.exists());
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn portal_capture_preserves_invalid_returned_path() {
+        let path = test_path("portal-invalid");
+        fs::write(&path, b"").unwrap();
+
+        let error = read_png_as_capture(
+            path.clone(),
+            "xdg-desktop-portal",
+            ScreenshotCleanup::Preserve,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("screenshot file was empty"));
+        assert!(path.exists());
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn gnome_capture_deletes_backend_temp_path_on_success() {
+        let path = test_path("gnome-valid");
+        fs::write(&path, valid_png(1, 1)).unwrap();
+
+        let capture = read_png_as_capture(
+            path.clone(),
+            "gnome-shell",
+            ScreenshotCleanup::DeletePath(path.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(capture.source, "gnome-shell");
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn gnome_capture_deletes_backend_temp_path_on_parse_failure() {
+        let path = test_path("gnome-invalid");
+        fs::write(&path, b"").unwrap();
+
+        let error = read_png_as_capture(
+            path.clone(),
+            "gnome-shell",
+            ScreenshotCleanup::DeletePath(path.clone()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("screenshot file was empty"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn gnome_failure_cleanup_removes_requested_temp_path() {
+        let path = test_path("gnome-pre-read-failure");
+        fs::write(&path, b"partial").unwrap();
+
+        cleanup_gnome_requested_path(&path);
+
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn gnome_deletes_requested_temp_path_and_preserves_unexpected_returned_path() {
+        let requested = test_path("gnome-requested");
+        let returned = test_path("gnome-returned");
+        fs::write(&requested, b"partial").unwrap();
+        fs::write(&returned, valid_png(1, 1)).unwrap();
+
+        let capture = read_png_as_capture(
+            returned.clone(),
+            "gnome-shell",
+            ScreenshotCleanup::DeletePath(requested.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(capture.source, "gnome-shell");
+        assert!(!requested.exists());
+        assert!(returned.exists());
+        let _ = fs::remove_file(returned);
     }
 }

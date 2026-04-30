@@ -14,10 +14,11 @@ use std::{
 use tokio::process::Command;
 use tracing::info;
 
-const REQUIRED_BUNDLE_FILES: [(&str, &str); 11] = [
+const REQUIRED_BUNDLE_FILES: [(&str, &str); 12] = [
     ("Cargo.toml", "Cargo.toml"),
     ("Cargo.lock", "Cargo.lock"),
     ("computer-use-linux", "computer-use-linux"),
+    ("updater", "updater"),
     (
         "plugins/openai-bundled/plugins/computer-use",
         "plugins/openai-bundled/plugins/computer-use",
@@ -424,7 +425,10 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
     }
 
     fn write_fake_computer_use_bundle(root: &Path) -> Result<()> {
-        fs::write(root.join("Cargo.toml"), b"[workspace]\nmembers = []\n")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            b"[workspace]\nmembers = [\"computer-use-linux\", \"updater\"]\n",
+        )?;
         fs::write(root.join("Cargo.lock"), b"# fake lock\n")?;
         fs::create_dir_all(root.join("computer-use-linux/src"))?;
         fs::write(
@@ -435,6 +439,12 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             root.join("computer-use-linux/src/main.rs"),
             b"fn main() {}\n",
         )?;
+        fs::create_dir_all(root.join("updater/src"))?;
+        fs::write(
+            root.join("updater/Cargo.toml"),
+            b"[package]\nname = \"codex-update-manager\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(root.join("updater/src/main.rs"), b"fn main() {}\n")?;
         fs::create_dir_all(root.join("plugins/openai-bundled/plugins/computer-use/.codex-plugin"))?;
         fs::write(
             root.join("plugins/openai-bundled/plugins/computer-use/.codex-plugin/plugin.json"),
@@ -631,6 +641,7 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             .join("scripts/patch-linux-window-ui.js")
             .exists());
         assert!(destination_root.join("computer-use-linux").exists());
+        assert!(destination_root.join("updater").exists());
         assert!(destination_root
             .join("plugins/openai-bundled/plugins/computer-use/.mcp.json")
             .exists());

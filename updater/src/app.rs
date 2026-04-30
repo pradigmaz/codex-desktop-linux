@@ -17,6 +17,7 @@ use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
     io::{Seek, SeekFrom, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -429,12 +430,20 @@ fn command_in_path(name: &str) -> Option<PathBuf> {
     let path_env = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(""));
     std::env::split_paths(&path_env).find_map(|entry| {
         let candidate = entry.join(name);
-        if candidate.is_file() {
+        if is_executable_file(&candidate) {
             Some(candidate)
         } else {
             None
         }
     })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
 }
 
 fn run_kdialog_prompt() -> Result<bool> {
@@ -1236,6 +1245,26 @@ mod tests {
             .arg("exit 1")
             .status()?;
         assert!(!pkexec_authentication_was_not_obtained(&status));
+        Ok(())
+    }
+
+    #[test]
+    fn command_lookup_requires_executable_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let candidate = temp.path().join("zenity");
+        std::fs::write(&candidate, b"#!/bin/sh\n")?;
+
+        let mut permissions = std::fs::metadata(&candidate)?.permissions();
+        permissions.set_mode(0o644);
+        std::fs::set_permissions(&candidate, permissions)?;
+
+        assert!(!is_executable_file(&candidate));
+
+        let mut permissions = std::fs::metadata(&candidate)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&candidate, permissions)?;
+
+        assert!(is_executable_file(&candidate));
         Ok(())
     }
 

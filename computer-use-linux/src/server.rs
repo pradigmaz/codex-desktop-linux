@@ -77,9 +77,13 @@ impl ComputerUseLinux {
                     self.cache_screenshot_size(capture.width, capture.height);
                     (Some(capture), None)
                 }
-                Err(error) => (None, Some(error.to_string())),
+                Err(error) => {
+                    self.clear_screenshot_size();
+                    (None, Some(error.to_string()))
+                }
             }
         } else {
+            self.clear_screenshot_size();
             (None, None)
         };
         let (accessibility_tree, accessibility_error) =
@@ -103,9 +107,7 @@ impl ComputerUseLinux {
                     ),
                 )
             };
-        if accessibility_error.is_none() {
-            self.cache_nodes(&accessibility_tree);
-        }
+        self.cache_nodes(&accessibility_tree);
         let message = if let Some(error) = &accessibility_error {
             format!("MCP registration is working, but AT-SPI tree extraction failed: {error}")
         } else if let Some(capture) = &screenshot {
@@ -452,10 +454,17 @@ impl ComputerUseLinux {
 
     fn cache_screenshot_size(&self, width: u32, height: u32) {
         if width == 0 || height == 0 {
+            self.clear_screenshot_size();
             return;
         }
         if let Ok(mut cached) = self.last_screenshot_size.lock() {
             *cached = Some(ScreenSize { width, height });
+        }
+    }
+
+    fn clear_screenshot_size(&self) {
+        if let Ok(mut cached) = self.last_screenshot_size.lock() {
+            *cached = None;
         }
     }
 
@@ -895,6 +904,27 @@ mod tests {
     }
 
     #[test]
+    fn empty_node_cache_clears_stale_element_index() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_nodes(&[node(
+            7,
+            Some(Bounds {
+                x: 10,
+                y: 20,
+                width: 100,
+                height: 40,
+            }),
+        )]);
+        backend.cache_nodes(&[]);
+
+        let error = backend
+            .resolve_target_point(None, None, Some(7))
+            .unwrap_err();
+
+        assert!(error.contains("No clickable bounds cached for element_index 7"));
+    }
+
+    #[test]
     fn absolute_mousemove_uses_coordinate_separator() {
         assert_eq!(
             absolute_mousemove_args(200, 300),
@@ -928,6 +958,21 @@ mod tests {
         backend.cache_screenshot_size(3840, 1080);
 
         assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (26460, 56485));
+    }
+
+    #[test]
+    fn screenshot_size_cache_can_be_cleared() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_screenshot_size(3840, 1080);
+
+        backend.clear_screenshot_size();
+
+        assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (1550, 930));
+
+        backend.cache_screenshot_size(3840, 1080);
+        backend.cache_screenshot_size(0, 1080);
+
+        assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (1550, 930));
     }
 
     #[test]
