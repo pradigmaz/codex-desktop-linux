@@ -23,10 +23,7 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 11] = [
         "plugins/openai-bundled/plugins/computer-use",
     ),
     ("install.sh", "install.sh"),
-    (
-        "launcher/start.sh.template",
-        "launcher/start.sh.template",
-    ),
+    ("launcher/start.sh.template", "launcher/start.sh.template"),
     ("scripts/build-deb.sh", "scripts/build-deb.sh"),
     (
         "scripts/patch-linux-window-ui.js",
