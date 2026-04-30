@@ -8,7 +8,7 @@ Contributions of all sizes are welcome: bug reports, documentation improvements,
 
 Please take a moment to understand how this repository is structured before making changes.
 
-- `install.sh` is the main source of truth for extracting, patching, and generating the Linux app launcher.
+- `install.sh` is the top-level installer entrypoint. Build-pipeline logic lives in `scripts/lib/*.sh` (DMG handling, ASAR patching, native modules, Electron download, bundled plugins) and the runtime launcher body lives in `launcher/start.sh.template`. Edit the template for launcher behavior and a lib file for build-pipeline behavior — `install.sh` itself is just orchestration plus the prelude that bakes install-time identity into the generated launcher.
 - `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh` package an already-generated `codex-app/`.
 - `scripts/install-deps.sh` bootstraps local development dependencies.
 - `updater/` contains the Rust update manager.
@@ -109,7 +109,7 @@ When these principles conflict, prefer the option that keeps the repository easi
 
 This repository has generated outputs, and changes must respect the real ownership boundaries.
 
-- Prefer changing `install.sh` over editing `codex-app/start.sh` directly.
+- Prefer changing `launcher/start.sh.template` (runtime/launcher behavior) or the relevant `scripts/lib/*.sh` module (build-pipeline behavior) over editing `codex-app/start.sh` or the top-level `install.sh` directly.
 - Prefer changing packaging templates and helper scripts over editing staged package output.
 - Prefer changing updater source under `updater/` over working around behavior in tests or generated files.
 - If behavior differs between generated artifacts and source, fix the source and regenerate or revalidate.
@@ -150,6 +150,8 @@ Run the subset that matches your change. For installer, packaging, or updater wo
 
 ```bash
 bash -n install.sh
+bash -n scripts/lib/*.sh
+bash -n launcher/start.sh.template
 bash -n scripts/install-deps.sh
 bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
