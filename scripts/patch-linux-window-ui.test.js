@@ -159,14 +159,14 @@ test("adds Linux tray support including the platform guard", () => {
 test("adds Linux tray support for current minified window and startup identifiers", () => {
   const source = [
     "v&&j.on(`close`,e=>{this.persistPrimaryWindowBounds(j,f);let t=this.getPrimaryWindows(f).some(e=>e!==j);if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),j.hide();return}});",
-    "let ce=async()=>{O=!0;try{await eN({buildFlavor:a,repoRoot:j.repoRoot})}catch(e){O=!1}};E&&ce();",
+    "let ce$=async()=>{O=!0;try{await eN({buildFlavor:a,repoRoot:j.repoRoot})}catch(e){O=!1}};E&&ce$();",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
 
   assert.match(patched, /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`/);
   assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
-  assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\(\);/);
+  assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
 });
 
 test("adds Linux single-instance lock and second-instance handoff", () => {
@@ -208,6 +208,18 @@ test("adds Linux launch actions through current setSecondInstanceArgsHandler bun
     prewarmPatched,
     /process\.platform===`linux`&&codexLinuxPrewarmHotkeyWindow\(\),A=Date\.now\(\),await z\.deepLinks\.flushPendingDeepLinks\(\)/,
   );
+});
+
+test("adds Linux launch actions when captured window identifiers contain dollar signs", () => {
+  const source = currentLaunchActionBundleFixture().replace(
+    "let se=async(e,t)=>{M.hotkeyWindowLifecycleManager.hide();let n=M.getPrimaryWindow(B),r=n??await M.createFreshLocalWindow(e);r!=null&&(R.desktopNotificationManager.dismissByNavigationPath(e),n!=null&&t.navigateExistingWindow&&z.navigateToRoute(r,e),ae(r))};",
+    "let se=async(e,t)=>{M.hotkeyWindowLifecycleManager.hide();let n=M.getPrimaryWindow(B),r$=n??await M.createFreshLocalWindow(e);r$!=null&&(R.desktopNotificationManager.dismissByNavigationPath(e),n!=null&&t.navigateExistingWindow&&z.navigateToRoute(r$,e),ae(r$))};",
+  );
+
+  const patched = applyPatchTwice(applyLinuxLaunchActionArgsPatch, source);
+
+  assert.match(patched, /codexLinuxHandleLaunchActionArgs/);
+  assert.match(patched, /z\.navigateToRoute\(r\$,e\),ae\(r\$\)/);
 });
 
 test("gates current close-to-tray setting through the captured global state", () => {

@@ -519,6 +519,10 @@ function requireName(source, moduleName) {
   return match?.[1] ?? null;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function findCallBlock(source, marker) {
   const markerStart = source.indexOf(marker);
   if (markerStart === -1) {
@@ -850,7 +854,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     );
     const trayStartupRegex = traySetupMatch == null
       ? null
-      : new RegExp(`([A-Za-z_$][\\w$]*)&&${traySetupMatch[1]}\\(\\);`);
+      : new RegExp(`([A-Za-z_$][\\w$]*)&&${escapeRegExp(traySetupMatch[1])}\\(\\);`);
     const dynamicTrayStartupMatch = trayStartupRegex == null ? null : patchedSource.match(trayStartupRegex);
     if (
       traySetupMatch != null &&
@@ -1150,7 +1154,7 @@ function applySemanticLinuxLaunchActionArgsPatch(currentSource) {
 
     const [, windowManagerVar, currentWindowVar, hostExpr, createdWindowVar] = openerVars;
     const routeVar = openerText.match(/([A-Za-z_$][\w$]*)\.navigateToRoute\([A-Za-z_$][\w$]*,e\)/)?.[1];
-    const focusFn = openerText.match(new RegExp(`,([A-Za-z_$][\\w$]*)\\(${createdWindowVar}\\)\\)\\}$`))?.[1];
+    const focusFn = openerText.match(new RegExp(`,([A-Za-z_$][\\w$]*)\\(${escapeRegExp(createdWindowVar)}\\)\\)\\}$`))?.[1];
     if (routeVar == null || focusFn == null) {
       continue;
     }
