@@ -9,6 +9,7 @@ use chrono::{Duration, Utc};
 use std::{
     ffi::OsString,
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -263,7 +264,7 @@ fn persist_if_changed(
     Ok(())
 }
 
-fn resolve_cli_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn resolve_cli_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = explicit_path {
         if is_executable(path) {
             return Some(path.to_path_buf());
@@ -643,7 +644,9 @@ fn node_toolchain_dir(path: &Path) -> bool {
 }
 
 fn is_executable(path: &Path) -> bool {
-    path.is_file()
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
