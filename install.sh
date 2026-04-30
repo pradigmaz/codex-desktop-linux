@@ -148,6 +148,16 @@ pid_is_current_user() {
     [ "$uid" = "$(id -u)" ]
 }
 
+# Electron helper processes (renderer, gpu-process, utility, zygote, ...)
+# all carry their role as a `--type=...` argv entry. Only the main app
+# process omits it, so we use this to skip orphaned helpers that survive
+# their parent and re-attach to systemd.
+pid_is_electron_helper() {
+    local pid="$1"
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -q '^--type='
+}
+
 pid_matches_install_target() {
     local pid="$1"
     local expected="$2"
@@ -158,7 +168,8 @@ pid_matches_install_target() {
     pid_is_current_user "$pid" || return 1
     actual="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
     [ -n "$actual" ] || return 1
-    [ "$actual" = "$(canonical_path "$expected")" ]
+    [ "$actual" = "$(canonical_path "$expected")" ] || return 1
+    ! pid_is_electron_helper "$pid"
 }
 
 find_running_install_target_pid() {
@@ -1148,6 +1159,12 @@ pid_is_current_user() {
     [ "$uid" = "$(id -u)" ]
 }
 
+pid_is_electron_helper() {
+    local pid="$1"
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -q '^--type='
+}
+
 pid_matches_executable() {
     local pid="$1"
     local expected="$2"
@@ -1157,7 +1174,8 @@ pid_matches_executable() {
     [ -d "/proc/$pid" ] || return 1
     pid_is_current_user "$pid" || return 1
     actual="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
-    [ "$actual" = "$(canonical_path "$expected")" ]
+    [ "$actual" = "$(canonical_path "$expected")" ] || return 1
+    ! pid_is_electron_helper "$pid"
 }
 
 find_running_app_pid() {
