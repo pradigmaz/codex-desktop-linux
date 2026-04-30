@@ -288,6 +288,22 @@ test("adds installWhenMissing to an already Linux-enabled Computer Use gate", ()
   assert.equal((patched.match(/installWhenMissing:!0,name:tn/g) || []).length, 1);
 });
 
+test("keeps scanning Computer Use gates after an already patched match", () => {
+  const source = [
+    "var tn=`computer-use`;",
+    "var $n=[{installWhenMissing:!0,name:tn,isEnabled:({features:e,platform:t})=>(t===`darwin`||t===`linux`)&&e.computerUse,migrate:on},{name:tn,isEnabled:({features:n,platform:r})=>r===`darwin`&&n.computerUse,migrate:wn}];",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, source);
+
+  assert.match(
+    patched,
+    /name:tn,isEnabled:\(\{features:n,platform:r\}\)=>\(r===`darwin`\|\|r===`linux`\)&&n\.computerUse,migrate:wn/,
+  );
+  assert.equal((patched.match(/installWhenMissing:!0,name:tn/g) || []).length, 2);
+  assert.doesNotMatch(patched, /r===`darwin`&&n\.computerUse/);
+});
+
 test("handles reordered Computer Use gate destructuring", () => {
   const darwinOnlySource = [
     "var tn=`computer-use`;",

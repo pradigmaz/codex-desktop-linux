@@ -943,6 +943,8 @@ function applyLinuxComputerUsePluginGatePatch(currentSource) {
   const computerUseNameVar = currentSource.match(/([A-Za-z_$][\w$]*)=(?:`computer-use`|"computer-use"|'computer-use')/)?.[1] ?? null;
   const gateRegex =
     /\{(installWhenMissing:!0,)?name:([A-Za-z_$][\w$]*|`computer-use`|"computer-use"|'computer-use'),isEnabled:\(\{([^}]*)\}\)=>([^{}]*?\.computerUse),migrate:([A-Za-z_$][\w$]*)\}/g;
+  let sawEnabledGate = false;
+  let sawUnpatchableGate = false;
   let match;
   while ((match = gateRegex.exec(currentSource)) != null) {
     const [gateSource, installWhenMissing, nameExpr, paramsText, expression, migrateVar] = match;
@@ -960,12 +962,18 @@ function applyLinuxComputerUsePluginGatePatch(currentSource) {
     const darwinOnlyExpression = `${platformVar}===\`darwin\`&&${featuresVar}.computerUse`;
     const linuxExpression = `(${platformVar}===\`darwin\`||${platformVar}===\`linux\`)&&${featuresVar}.computerUse`;
     if (installWhenMissing != null && expression === linuxExpression) {
-      return currentSource;
+      sawEnabledGate = true;
+      continue;
     }
     if (expression === darwinOnlyExpression || expression === linuxExpression) {
       const replacement = buildComputerUseGate({ nameExpr, featuresVar, platformVar, migrateVar });
       return `${currentSource.slice(0, match.index)}${replacement}${currentSource.slice(match.index + gateSource.length)}`;
     }
+    sawUnpatchableGate = true;
+  }
+
+  if (sawEnabledGate && !sawUnpatchableGate) {
+    return currentSource;
   }
 
   if (hasComputerUseLiteral(currentSource) && currentSource.includes("computerUse")) {
