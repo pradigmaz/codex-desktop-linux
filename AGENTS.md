@@ -50,6 +50,18 @@ The current working flow is:
   Rust crate that checks for new upstream DMGs, rebuilds local native-package artifacts, tracks update state, and installs prepared packages after the app exits.
 - `updater/Cargo.toml`
   Source of truth for the updater crate version and dependency policy.
+- `computer-use-linux/`
+  Rust crate implementing the Linux Computer Use MCP backend (`codex-computer-use-linux` binary). Talks AT-SPI to read accessibility trees, captures screenshots through GNOME Shell DBus or XDG Desktop Portal, and synthesizes input via `ydotool`. Runs as a subprocess of Codex Electron when the bundled plugin is registered.
+- `plugins/openai-bundled/plugins/computer-use/`
+  Bundled plugin manifest for Linux Computer Use (`.codex-plugin/plugin.json` + `.mcp.json`). Author and license fields here must stay consistent with the repo's MIT license — they live alongside the runtime resources installed under `/opt/codex-desktop/resources/plugins/openai-bundled/`.
+- `packaging/linux/codex-update-manager-user-service.sh`
+  Shared shell helper sourced by `postinst` / `prerm` / `postrm` (DEB) and `%post` / `%preun` / `%postun` (RPM) plus pacman `.install` hooks. Provides `codex_ensure_user_service_running` / `codex_cleanup_user_service` / `codex_reload_user_managers` for safe `systemd --user` start/stop/disable across formats.
+- `packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy`
+  Polkit policy installed under `/usr/share/polkit-1/actions/` so the privileged updater install steps trigger the desktop authentication agent instead of `pkexec`'s textual fallback.
+- `scripts/patch-linux-window-ui.js`
+  ASAR patcher. Independent fail-soft patch functions with regex-driven needles. Each upstream-bundle change goes here.
+- `scripts/patch-linux-window-ui.test.js`
+  Node test suite for the patcher. Run with `node --test`.
 - `docs/webview-server-evaluation.md`
   Decision record for the future Python-to-Rust webview server discussion.
 
@@ -80,8 +92,16 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
   GUI launchers often do not inherit the user's shell `PATH`. The generated `start.sh` explicitly searches for `codex`, including common `nvm` locations.
 - CLI preflight:
   Before Electron launches, the generated launcher asks `codex-update-manager` to verify the installed Codex CLI, install it automatically if it is missing, and update it if the npm package is newer. The check is best-effort: it uses a 1-hour cooldown for npm registry lookups, falls back to `npm install -g --prefix ~/.local` if a global install fails, and warns instead of blocking app launch when the refresh attempt does not succeed.
+- ASAR patches are independent and fail-soft:
+  `scripts/patch-linux-window-ui.js` is structured as a chain of small, independent patch functions called from `patchMainBundleSource`. Each one has its own regex-driven needles, an idempotency check, and a `console.warn` fall-back when the upstream bundle drifts. Current patches: `applyLinuxWindowOptionsPatch`, `applyLinuxMenuPatch`, `applyLinuxSetIconPatch`, `applyLinuxOpaqueBackgroundPatch`, `applyLinuxFileManagerPatch`, `applyLinuxTrayPatch`, `applyLinuxSingleInstancePatch`, `applyLinuxComputerUsePluginGatePatch`, `applyLinuxTrayCloseSettingPatch`, `applyLinuxSettingsPersistencePatch`, `applyLinuxLaunchActionArgsPatch`, `applyLinuxHotkeyWindowPrewarmPatch`, `applyBrowserAnnotationScreenshotPatch`. Plus `patchKeybindsSettingsAssets` (transactional — atomic, fail-soft via `WARN: Keybinds settings patch skipped: ...`) and `patchCommentPreloadBundle` for browser annotation fixes. When adding a new needle, mirror this pattern — never `throw`.
 - Linux file manager integration:
-  During ASAR patching, `scripts/patch-linux-window-ui.js` also tries to inject a Linux implementation for `Open in File Manager`. The patch is intentionally fail-soft: if the upstream minified bundle no longer matches, the install continues and emits exactly `Failed to apply Linux File Manager Patch`.
+  `applyLinuxFileManagerPatch` injects a Linux implementation for `Open in File Manager`. If the upstream minified bundle no longer matches, the install continues and emits exactly `Failed to apply Linux File Manager Patch`.
+- Linux Computer Use plugin gate:
+  `applyLinuxComputerUsePluginGatePatch` flips Codex's platform check from `darwin`-only to `darwin || linux` and adds `installWhenMissing: true` so the bundled plugin auto-registers. **Note:** the same feature is also gated by an OpenAI per-account Statsig rollout (`Qf('1506311413')` in the webview bundle, sets the `computerUse` feature flag). Installing the package only makes the platform side ready — the feature stays invisible in the UI until OpenAI flips the per-account flag. Same shape as the `gpt-5.5` model rollout. There is no project-side workaround that doesn't deliberately bypass OpenAI's gating; deferring that decision.
+- Linux settings persistence:
+  `applyLinuxSettingsPersistencePatch` inserts `codexLinuxPersistSettingsState(...)` so the keybinds-settings page toggles (system tray, warm start, compact prompt window) are mirrored to `~/.config/codex-desktop/settings.json`, where `linux_setting_enabled` in `install.sh` reads them. The patch is fail-soft: if the upstream `Yb` state-file marker or `set-global-state` IPC handler isn't present, the patch logs a warning and skips, leaving keybinds toggles in-memory only.
+- Linux warm-start handoff:
+  `applyLinuxLaunchActionArgsPatch` + `applyLinuxHotkeyWindowPrewarmPatch` add a Unix-domain-socket launch-action listener (`launch-action.sock` under `$XDG_RUNTIME_DIR/codex-desktop/`). When `start.sh` detects an existing Electron PID, it sends `--new-chat` / `--quick-chat` / `--prompt-chat` / `--hotkey-window` over the socket and exits, so a second launch never spawns a fresh Electron.
 - Linux translucent sidebar default:
   During the same ASAR patch step, Linux defaults `Translucent sidebar` to `false` by applying `opaqueWindows: true` only when the app has no saved explicit value yet. This keeps existing user preferences intact while avoiding the sidebar disappearing bug on first run.
 - Launcher logging:
@@ -112,7 +132,7 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 
 ## Crate Versioning
 
-- Current updater crate version: `0.4.2`
+- Current updater crate version: `0.5.0`
 - Bump `patch` for fixes, docs, and maintenance-only updates.
 - Bump `minor` for compatible feature additions.
 - Bump `major` for incompatible CLI, persisted-state, or install-flow changes.
