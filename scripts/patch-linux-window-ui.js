@@ -705,6 +705,43 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   return currentSource;
 }
 
+function findNamedFunctionBody(source, functionName) {
+  const functionMatch = source.match(
+    new RegExp(`(?:async\\s+)?function\\s+${escapeRegExp(functionName)}\\([^)]*\\)\\{`),
+  );
+  if (functionMatch == null) {
+    return null;
+  }
+
+  const openIndex = functionMatch.index + functionMatch[0].length - 1;
+  const closeIndex = findMatchingBrace(source, openIndex);
+  return closeIndex === -1 ? null : source.slice(openIndex, closeIndex + 1);
+}
+
+function isTrayFactoryFunction(source, functionName) {
+  const body = findNamedFunctionBody(source, functionName);
+  return body != null && /new [A-Za-z_$][\w$]*\.Tray\(/.test(body);
+}
+
+function findDynamicTraySetup(source) {
+  const setupRegex =
+    /let ([A-Za-z_$][\w$]*)=async\(\)=>\{[A-Za-z_$][\w$]*=!0;try\{await ([A-Za-z_$][\w$]*)\(\{buildFlavor:/g;
+  let match;
+  while ((match = setupRegex.exec(source)) != null) {
+    const [, setupFn, factoryFn] = match;
+    if (isTrayFactoryFunction(source, factoryFn)) {
+      return { setupFn, index: match.index };
+    }
+  }
+  return null;
+}
+
+function findDynamicTrayStartupCall(source, setupFn, startIndex) {
+  const startupRegex = new RegExp(`([A-Za-z_$][\\w$]*)&&${escapeRegExp(setupFn)}\\(\\);`, "g");
+  startupRegex.lastIndex = startIndex;
+  return startupRegex.exec(source);
+}
+
 function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
 
@@ -851,24 +888,18 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   } else if (patchedSource.includes(trayStartupNeedle)) {
     patchedSource = patchedSource.replace(trayStartupNeedle, trayStartupPatch);
   } else {
-    const traySetupMatch = patchedSource.match(
-      /let ([A-Za-z_$][\w$]*)=async\(\)=>\{[A-Za-z_$][\w$]*=!0;try\{await [A-Za-z_$][\w$]*\(\{buildFlavor:/,
-    );
-    const trayStartupRegex = traySetupMatch == null
+    const traySetup = findDynamicTraySetup(patchedSource);
+    const dynamicTrayStartupMatch = traySetup == null
       ? null
-      : new RegExp(`([A-Za-z_$][\\w$]*)&&${escapeRegExp(traySetupMatch[1])}\\(\\);`);
-    const dynamicTrayStartupMatch = trayStartupRegex == null ? null : patchedSource.match(trayStartupRegex);
+      : findDynamicTrayStartupCall(patchedSource, traySetup.setupFn, traySetup.index);
     if (
-      traySetupMatch != null &&
-      patchedSource.includes(`process.platform===\`linux\`&&codexLinuxIsTrayEnabled())&&${traySetupMatch[1]}();`)
+      traySetup != null &&
+      patchedSource.includes(`process.platform===\`linux\`&&codexLinuxIsTrayEnabled())&&${traySetup.setupFn}();`)
     ) {
       // Already patched with a newer minifier's tray setup identifier.
     } else if (dynamicTrayStartupMatch != null) {
       const isWindowsVar = dynamicTrayStartupMatch[1];
-      patchedSource = patchedSource.replace(
-        trayStartupRegex,
-        `(${isWindowsVar}||process.platform===\`linux\`&&codexLinuxIsTrayEnabled())&&${traySetupMatch[1]}();`,
-      );
+      patchedSource = `${patchedSource.slice(0, dynamicTrayStartupMatch.index)}(${isWindowsVar}||process.platform===\`linux\`&&codexLinuxIsTrayEnabled())&&${traySetup.setupFn}();${patchedSource.slice(dynamicTrayStartupMatch.index + dynamicTrayStartupMatch[0].length)}`;
     } else {
       console.warn("WARN: Could not find tray startup call — skipping Linux tray startup patch");
     }
@@ -1096,11 +1127,11 @@ function findLastRegexMatch(source, regex) {
 
 function findLinuxGlobalStateExpression(prefix) {
   const objectStateMatch = findLastRegexMatch(prefix, /(?:let|,)\s*([A-Za-z_$][\w$]*)=\{globalState:/g);
-  if (objectStateMatch != null) {
+  const propertyStateMatch = findLastRegexMatch(prefix, /globalState:([A-Za-z_$][\w$]*)\.globalState/g);
+
+  if (objectStateMatch != null && (propertyStateMatch == null || objectStateMatch.index > propertyStateMatch.index)) {
     return `${objectStateMatch[1]}.globalState`;
   }
-
-  const propertyStateMatch = findLastRegexMatch(prefix, /globalState:([A-Za-z_$][\w$]*)\.globalState/g);
   if (propertyStateMatch != null) {
     return `${propertyStateMatch[1]}.globalState`;
   }

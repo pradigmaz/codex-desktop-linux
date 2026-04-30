@@ -159,6 +159,7 @@ test("adds Linux tray support including the platform guard", () => {
 test("adds Linux tray support for current minified window and startup identifiers", () => {
   const source = [
     "v&&j.on(`close`,e=>{this.persistPrimaryWindowBounds(j,f);let t=this.getPrimaryWindows(f).some(e=>e!==j);if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),j.hide();return}});",
+    "async function eN(e){let t=await Ww(e.buildFlavor,e.repoRoot),r=new n.Tray(t.defaultIcon);return r}",
     "let ce$=async()=>{O=!0;try{await eN({buildFlavor:a,repoRoot:j.repoRoot})}catch(e){O=!1}};E&&ce$();",
   ].join("");
 
@@ -166,6 +167,21 @@ test("adds Linux tray support for current minified window and startup identifier
 
   assert.match(patched, /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`/);
   assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
+  assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
+});
+
+test("scopes dynamic tray startup matching to the tray initializer", () => {
+  const source = [
+    "async function aa(e){return e.buildFlavor}",
+    "let startOther=async()=>{A=!0;try{await aa({buildFlavor:a})}catch(e){A=!1}};U&&startOther();",
+    "async function eN(e){let t=await Ww(e.buildFlavor,e.repoRoot),r=new n.Tray(t.defaultIcon);return r}",
+    "let ce$=async()=>{O=!0;try{await eN({buildFlavor:a,repoRoot:j.repoRoot})}catch(e){O=!1}};E&&ce$();",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+
+  assert.match(patched, /U&&startOther\(\);/);
+  assert.doesNotMatch(patched, /\(U\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&startOther\(\);/);
   assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
 });
 
@@ -261,6 +277,23 @@ test("does not treat unrelated Linux setting references as close-to-tray patched
     patched,
     /canHideLastLocalWindowToTray:\(\)=>O&&\(process\.platform!==`linux`\|\|j\.globalState\.get\(`codex-linux-system-tray-enabled`\)!==!1\),disposables:k/,
   );
+});
+
+test("chooses the nearest globalState alias for close-to-tray settings", () => {
+  const source = [
+    "let stale={globalState:{get(){return false}}};",
+    "let j=KD({moduleDir:__dirname});",
+    "let M=FM({buildFlavor:a,globalState:j.globalState,canHideLastLocalWindowToTray:()=>O,disposables:k});",
+    "t.Mr().info(`Launching app`);",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayCloseSettingPatch, source);
+
+  assert.match(
+    patched,
+    /canHideLastLocalWindowToTray:\(\)=>O&&\(process\.platform!==`linux`\|\|j\.globalState\.get\(`codex-linux-system-tray-enabled`\)!==!1\),disposables:k/,
+  );
+  assert.doesNotMatch(patched, /stale\.globalState\.get\(`codex-linux-system-tray-enabled`\)/);
 });
 
 test("allows bundled Computer Use on Linux as well as macOS", () => {
