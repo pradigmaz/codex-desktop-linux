@@ -178,7 +178,8 @@ SCRIPT
     assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "CHROME_DESKTOP=codex-cua-lab.desktop"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "/usr/bin/codex-cua-lab"
+    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "/usr/bin/codex-cua-lab %u"
+    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
 }
 
@@ -358,6 +359,10 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/install.sh" "CODEX_DESKTOP_LAUNCH_ACTION_SOCKET"
     assert_contains "$REPO_DIR/install.sh" "APP_SETTINGS_FILE"
     assert_contains "$REPO_DIR/install.sh" "linux_setting_enabled"
+    assert_contains "$REPO_DIR/install.sh" "register_url_scheme_handlers"
+    assert_contains "$REPO_DIR/install.sh" "xdg-mime default"
+    assert_contains "$REPO_DIR/install.sh" "x-scheme-handler/"
+    assert_contains "$REPO_DIR/install.sh" "codex-browser-sidebar"
     assert_contains "$REPO_DIR/install.sh" "codex-linux-warm-start-enabled"
     assert_contains "$REPO_DIR/install.sh" "ADOPTED_WEBVIEW_PID"
     assert_contains "$REPO_DIR/install.sh" "Reusing webview server pid="
@@ -451,6 +456,10 @@ PY
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "PACKAGED_RUNTIME_SOURCE"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "/usr/bin/codex-desktop %u"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "@HOME@/.local/bin/codex-desktop %U"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
 }
 
 test_side_by_side_launcher_identity() {

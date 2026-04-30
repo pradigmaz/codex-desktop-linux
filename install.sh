@@ -964,6 +964,40 @@ hydrate_graphical_session_env() {
     return 0
 }
 
+desktop_entry_exists() {
+    local desktop_name="$CODEX_LINUX_APP_ID.desktop"
+    local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    local data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+    local data_dir
+    local -a data_dirs_array
+
+    [ -f "$data_home/applications/$desktop_name" ] && return 0
+
+    IFS=: read -r -a data_dirs_array <<< "$data_dirs"
+    for data_dir in "${data_dirs_array[@]}"; do
+        [ -f "$data_dir/applications/$desktop_name" ] && return 0
+    done
+
+    return 1
+}
+
+register_url_scheme_handlers() {
+    command -v xdg-mime >/dev/null 2>&1 || return 0
+    desktop_entry_exists || return 0
+
+    local desktop_name="$CODEX_LINUX_APP_ID.desktop"
+    local scheme
+    local mime_type
+    local current_handler
+
+    for scheme in codex codex-browser-sidebar; do
+        mime_type="x-scheme-handler/$scheme"
+        current_handler="$(xdg-mime query default "$mime_type" 2>/dev/null || true)"
+        [ "$current_handler" = "$desktop_name" ] && continue
+        xdg-mime default "$desktop_name" "$mime_type" >/dev/null 2>&1 || true
+    done
+}
+
 linux_setting_enabled() {
     local key="$1"
     local default_value="${2:-1}"
@@ -1660,6 +1694,7 @@ launch_electron() {
 hydrate_graphical_session_env
 configure_side_by_side_app_env
 load_packaged_runtime_helper
+register_url_scheme_handlers
 clear_stale_pid_file
 detect_warm_start
 trap cleanup_launcher EXIT
