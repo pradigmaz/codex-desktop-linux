@@ -34,9 +34,13 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 12] = [
     ("packaging/linux", "packaging/linux"),
     ("assets/codex.png", "assets/codex.png"),
 ];
-const OPTIONAL_BUNDLE_FILES: [(&str, &str); 2] = [
+const OPTIONAL_BUNDLE_FILES: [(&str, &str); 3] = [
     ("scripts/build-rpm.sh", "scripts/build-rpm.sh"),
     ("scripts/build-pacman.sh", "scripts/build-pacman.sh"),
+    (
+        "scripts/rebuild-candidate.sh",
+        "scripts/rebuild-candidate.sh",
+    ),
 ];
 const PACMAN_PACKAGE_SUFFIXES: &[&str] = &[
     ".pkg.tar.zst",
@@ -548,6 +552,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             FakePackageOutput::Pacman,
         )?;
         fs::write(
+            bundle_root.join("scripts/rebuild-candidate.sh"),
+            b"#!/bin/bash\n",
+        )?;
+        fs::write(
             bundle_root.join("scripts/patch-linux-window-ui.js"),
             b"console.log('patched');\n",
         )?;
@@ -591,6 +599,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         assert_eq!(state.status, UpdateStatus::ReadyToInstall);
         assert!(artifacts.workspace_dir.exists());
         assert!(artifacts.package_path.exists());
+        assert!(artifacts
+            .workspace_dir
+            .join("builder/scripts/rebuild-candidate.sh")
+            .exists());
         assert!(
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
