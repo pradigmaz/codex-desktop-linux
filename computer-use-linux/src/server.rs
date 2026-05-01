@@ -375,12 +375,8 @@ impl ComputerUseLinux {
         &self,
         Parameters(params): Parameters<ActionParams>,
     ) -> Json<ActionOutput> {
-        self.perform_element_action(
-            &params,
-            "perform_action",
-            params.action.as_deref().or(Some("0")),
-        )
-        .await
+        self.perform_element_action(&params, params.action.as_deref().or(Some("0")))
+            .await
     }
 
     #[tool(
@@ -1193,7 +1189,6 @@ impl ComputerUseLinux {
     async fn perform_element_action(
         &self,
         params: &ActionParams,
-        tool_name: &str,
         requested_action: Option<&str>,
     ) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params.clone()));
@@ -1205,7 +1200,7 @@ impl ComputerUseLinux {
                 return Json(ActionOutput {
                     ok: false,
                     implemented: true,
-                    action: tool_name.to_string(),
+                    action: "perform_action".to_string(),
                     message,
                     received,
                 });
@@ -1216,7 +1211,7 @@ impl ComputerUseLinux {
             Ok(invocation) => Json(ActionOutput {
                 ok: invocation.ok,
                 implemented: true,
-                action: tool_name.to_string(),
+                action: "perform_action".to_string(),
                 message: if invocation.ok {
                     format!(
                         "AT-SPI action {} ({}) invoked.",
@@ -1243,7 +1238,7 @@ impl ComputerUseLinux {
             Err(error) => Json(ActionOutput {
                 ok: false,
                 implemented: true,
-                action: tool_name.to_string(),
+                action: "perform_action".to_string(),
                 message: error.to_string(),
                 received,
             }),
