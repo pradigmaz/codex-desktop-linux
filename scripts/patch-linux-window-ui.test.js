@@ -30,6 +30,8 @@ const fileManagerBundle =
   "var lu=jl({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>il(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:uu,args:e=>il(e),open:async({path:e})=>du(e)}});function uu(){}";
 const alreadyOpaqueBackgroundBundle =
   "process.platform===`linux`?{backgroundColor:e?t:n,backgroundMaterial:null}:{backgroundColor:r,backgroundMaterial:null}";
+const opaqueBackgroundBundleWithDriftingGw =
+  "var cM=`#00000000`,lM=`#000000`,uM=`#f9f9f9`;function OM(e){return e===`avatarOverlay`||e===`browserCommentPopup`}function jM({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return e===`win32`&&!OM(t)?n?{backgroundColor:r?lM:uM,backgroundMaterial:`none`}:{backgroundColor:cM,backgroundMaterial:`mica`}:{backgroundColor:cM,backgroundMaterial:null}}function gw(e){return e.page==null?e.snapshot.url:mw(e.page)}";
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -95,6 +97,16 @@ test("adds Linux menu hiding next to Windows removeMenu calls", () => {
 test("recognizes already-applied Linux opaque background patch", () => {
   const patched = applyPatchTwice(applyLinuxOpaqueBackgroundPatch, alreadyOpaqueBackgroundBundle);
   assert.equal(patched, alreadyOpaqueBackgroundBundle);
+});
+
+test("uses the local transparent appearance predicate for Linux opaque backgrounds", () => {
+  const patched = applyPatchTwice(
+    applyLinuxOpaqueBackgroundPatch,
+    opaqueBackgroundBundleWithDriftingGw,
+  );
+
+  assert.match(patched, /e===`linux`&&!OM\(t\)\?\{backgroundColor:r\?lM:uM/);
+  assert.doesNotMatch(patched, /process\.platform===`linux`&&!gw\(t\)/);
 });
 
 test("adds Linux window icon handling when an icon asset is available", () => {

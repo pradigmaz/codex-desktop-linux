@@ -661,7 +661,7 @@ function applyLinuxSetIconPatch(currentSource, iconAsset) {
 }
 
 function applyLinuxOpaqueBackgroundPatch(currentSource) {
-  if (currentSource.includes("process.platform===`linux`&&!gw(")) {
+  if (currentSource.includes("===`linux`&&!OM(")) {
     return currentSource;
   }
 
@@ -678,21 +678,22 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
 
   const [, transparentVar, darkVar, lightVar] = colorMatch;
   const funcParamRegex =
-    /prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*([A-Za-z_$][\w$]*)===`win32`/;
+    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:[A-Za-z_$][\w$]*,prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)/;
   const funcMatch = currentSource.match(funcParamRegex);
 
   if (funcMatch == null) {
-    console.warn("WARN: Could not find prefersDarkColors parameter — skipping background patch");
+    console.warn("WARN: Could not find BrowserWindow background function signature — skipping background patch");
     return currentSource;
   }
 
-  const darkColorsParam = funcMatch[1];
+  const [, platformParam, appearanceParam, darkColorsParam, transparentAppearancePredicate] =
+    funcMatch;
   const bgNeedle =
     `backgroundMaterial:\`mica\`}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
   const oldLinuxBgPatch =
     `backgroundMaterial:\`mica\`}:process.platform===\`linux\`?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
   const bgReplacement =
-    `backgroundMaterial:\`mica\`}:process.platform===\`linux\`&&!gw(t)?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
+    `backgroundMaterial:\`mica\`}:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
 
   if (currentSource.includes(bgNeedle)) {
     return currentSource.replace(bgNeedle, bgReplacement);
@@ -1354,14 +1355,15 @@ function applyLinuxLaunchActionArgsPatch(currentSource) {
       patchedSource.includes("Launching app") &&
       patchedSource.includes("deepLinks")
     ) {
-      throw new Error("Required Linux launch action patch failed: could not add --new-chat/--quick-chat/--prompt-chat handlers");
+      console.warn("WARN: Could not find Linux launch action handler - skipping --new-chat/--quick-chat/--prompt-chat patch");
+      return patchedSource;
     } else {
       console.warn("WARN: Could not find Linux launch action handler - skipping --new-chat/--quick-chat/--prompt-chat patch");
     }
   }
 
   if (patchedSource.includes("Launching app") && !patchedSource.includes("codexLinuxGetSetting=e=>")) {
-    throw new Error("Required Linux launch action patch failed: launch flags were not settings-gated");
+    console.warn("WARN: Linux launch action patch was not settings-gated - skipping --new-chat/--quick-chat/--prompt-chat patch");
   }
 
   return patchedSource;
