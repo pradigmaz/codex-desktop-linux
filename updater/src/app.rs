@@ -186,7 +186,7 @@ async fn run_daemon(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::refresh_cached_status(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if packaged_runtime_removed(config) {
@@ -244,7 +244,7 @@ async fn run_check_now(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::refresh_cached_status(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if if_stale && upstream_check_is_fresh(config, state) {
@@ -265,7 +265,7 @@ fn upstream_check_is_fresh(config: &RuntimeConfig, state: &PersistedState) -> bo
 }
 
 fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> Result<()> {
-    codex_cli::refresh_status(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(state)?);
@@ -487,6 +487,10 @@ async fn run_check_cycle(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    if let Err(error) = codex_cli::reconcile_if_present(state, paths) {
+        warn!(?error, "unable to reconcile Codex CLI before checking upstream packages");
+    }
+
     let retrying_failed_update = state.status == UpdateStatus::Failed;
 
     if update_install_is_pending(&state.status) {
