@@ -1,6 +1,6 @@
 use crate::atspi_tree::{
     list_accessible_apps, perform_action as invoke_accessibility_action, set_element_value,
-    snapshot_tree, AccessibilityAction, AccessibilityNode, AccessibleAppSummary,
+    snapshot_tree, AccessibilityAction, AccessibilityNode, AccessibleAppSummary, Bounds,
     ValueSetInvocation,
 };
 use crate::diagnostics::{doctor_report, setup_accessibility_report, DoctorReport, SetupReport};
@@ -1170,11 +1170,7 @@ impl ComputerUseLinux {
     fn center_for_cached_node(&self, element_index: u32) -> Option<(i32, i32)> {
         let cached = self.last_nodes.lock().ok()?;
         let node = cached.iter().find(|node| node.index == element_index)?;
-        let bounds = node.bounds.as_ref()?;
-        if bounds.width <= 0 || bounds.height <= 0 {
-            return None;
-        }
-        Some((bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
+        bounds_center(node.bounds.as_ref()?)
     }
 
     fn resolve_object_ref(
@@ -1288,6 +1284,19 @@ fn is_plain_left_click(button: Option<&str>, click_count: Option<u32>) -> bool {
 
 fn primary_action_name(actions: &[AccessibilityAction]) -> Option<String> {
     actions.first().map(|action| action.name.clone())
+}
+
+fn bounds_center(bounds: &Bounds) -> Option<(i32, i32)> {
+    if bounds.width <= 0 || bounds.height <= 0 {
+        return None;
+    }
+    if bounds.x <= i32::MIN / 2 || bounds.y <= i32::MIN / 2 {
+        return None;
+    }
+    Some((
+        bounds.x.checked_add(bounds.width / 2)?,
+        bounds.y.checked_add(bounds.height / 2)?,
+    ))
 }
 
 fn select_accessibility_object_ref(
@@ -1898,6 +1907,26 @@ mod tests {
     }
 
     #[test]
+    fn cached_element_index_ignores_sentinel_bounds() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_nodes(&[node(
+            7,
+            Some(Bounds {
+                x: i32::MIN,
+                y: i32::MIN,
+                width: 1,
+                height: 1,
+            }),
+        )]);
+
+        let error = backend
+            .resolve_optional_target_point(None, None, Some(7))
+            .unwrap_err();
+
+        assert!(error.contains("No clickable bounds cached for element_index 7"));
+    }
+
+    #[test]
     fn empty_node_cache_clears_stale_element_index() {
         let backend = ComputerUseLinux::default();
         backend.cache_nodes(&[node(
@@ -1924,6 +1953,49 @@ mod tests {
         backend.cache_nodes(&[node_with_actions(
             7,
             None,
+            vec![AccessibilityAction {
+                index: 0,
+                name: "Click".to_string(),
+                description: "Clicks the button".to_string(),
+                keybinding: String::new(),
+            }],
+        )]);
+
+        let target = backend
+            .resolve_click_target(&ClickParams {
+                element_index: Some(7),
+                x: None,
+                y: None,
+                button: None,
+                click_count: None,
+            })
+            .unwrap();
+
+        match target {
+            ClickTarget::PrimaryAction {
+                object_ref,
+                action_name,
+            } => {
+                assert_eq!(object_ref, ":1.7/org/a11y/atspi/accessible/7");
+                assert_eq!(action_name.as_deref(), Some("Click"));
+            }
+            ClickTarget::Coordinates(_, _) => {
+                panic!("expected AT-SPI primary-action fallback")
+            }
+        }
+    }
+
+    #[test]
+    fn click_target_falls_back_to_primary_action_with_sentinel_bounds() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_nodes(&[node_with_actions(
+            7,
+            Some(Bounds {
+                x: i32::MIN,
+                y: i32::MIN,
+                width: 1,
+                height: 1,
+            }),
             vec![AccessibilityAction {
                 index: 0,
                 name: "Click".to_string(),
