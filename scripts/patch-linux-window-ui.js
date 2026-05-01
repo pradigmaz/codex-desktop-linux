@@ -27,6 +27,61 @@ function findIconAsset(extractedDir) {
 const keybindsSettingsAsset = "keybinds-settings-linux.js";
 const linuxKeybindOverridesKey = "codex-linux-keybind-overrides";
 
+const COMPUTER_USE_UI_ENV_VAR = "CODEX_LINUX_ENABLE_COMPUTER_USE_UI";
+const COMPUTER_USE_UI_SETTINGS_KEY = "codex-linux-computer-use-ui-enabled";
+
+// Two opt-in surfaces, both checked at build time:
+//
+// 1. Env var `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` — for ad-hoc builds
+//    (`make build-app`, manual `make package`).
+// 2. Persisted flag `codex-linux-computer-use-ui-enabled: true` in
+//    `~/.config/codex-desktop/settings.json` — for the auto-updater path,
+//    where the systemd user service does not inherit interactive shell env.
+//
+// Either path enables the three Statsig-bypass-style Computer Use UI patches
+// (`applyLinuxComputerUseFeaturePatch`, `applyLinuxComputerUseRendererAvailabilityPatch`,
+// `applyLinuxComputerUseInstallFlowPatch`). The plugin manifest gate
+// (`applyLinuxComputerUsePluginGatePatch`) is pure platform-port glue and
+// stays unconditional — it is what we have shipped on by default since the
+// project's first release.
+function isComputerUseUiEnabled(env = process.env) {
+  if (env[COMPUTER_USE_UI_ENV_VAR] === "1") {
+    return true;
+  }
+  return readComputerUseUiSettingsFlag(env);
+}
+
+function readComputerUseUiSettingsFlag(env) {
+  const settingsPath = computerUseUiSettingsPath(env);
+  if (settingsPath == null) {
+    return false;
+  }
+  try {
+    if (!fs.existsSync(settingsPath)) {
+      return false;
+    }
+    const raw = fs.readFileSync(settingsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    return parsed[COMPUTER_USE_UI_SETTINGS_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+function computerUseUiSettingsPath(env) {
+  const xdgConfig = env.XDG_CONFIG_HOME;
+  const home = env.HOME;
+  const configHome = (xdgConfig && xdgConfig.length > 0)
+    ? xdgConfig
+    : home
+      ? path.join(home, ".config")
+      : null;
+  return configHome == null ? null : path.join(configHome, "codex-desktop", "settings.json");
+}
+
 // Lookback/lookahead windows used when searching for the nearest minified
 // identifier or surrounding context around a regex anchor in the bundle.
 // Sized empirically to the typical distance between a feature's anchor and
@@ -1510,6 +1565,7 @@ function patchMainBundleSource(source, iconAsset) {
   let patched = source;
   const iconPathExpression =
     iconAsset == null ? null : `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
+  const enableComputerUseUi = isComputerUseUiEnabled();
   patched = applyLinuxWindowOptionsPatch(patched, iconAsset);
   patched = applyLinuxMenuPatch(patched);
   patched = applyLinuxSetIconPatch(patched, iconAsset);
@@ -1517,7 +1573,9 @@ function patchMainBundleSource(source, iconAsset) {
   patched = applyLinuxFileManagerPatch(patched);
   patched = applyLinuxTrayPatch(patched, iconPathExpression);
   patched = applyLinuxSingleInstancePatch(patched);
-  patched = applyLinuxComputerUseFeaturePatch(patched);
+  if (enableComputerUseUi) {
+    patched = applyLinuxComputerUseFeaturePatch(patched);
+  }
   patched = applyLinuxComputerUsePluginGatePatch(patched);
   patched = applyLinuxTrayCloseSettingPatch(patched);
   patched = applyLinuxSettingsPersistencePatch(patched);
@@ -1631,26 +1689,28 @@ function patchExtractedApp(extractedDir) {
       "assets",
     )} — skipping translucent sidebar default patch`,
   );
-  patchAssetFiles(
-    extractedDir,
-    /^use-model-settings-.*\.js$/,
-    applyLinuxComputerUseRendererAvailabilityPatch,
-    `WARN: Could not find model settings bundle in ${path.join(
+  if (isComputerUseUiEnabled()) {
+    patchAssetFiles(
       extractedDir,
-      "webview",
-      "assets",
-    )} — skipping Linux Computer Use UI availability patch`,
-  );
-  patchAssetFiles(
-    extractedDir,
-    /^use-plugin-install-flow-.*\.js$/,
-    applyLinuxComputerUseInstallFlowPatch,
-    `WARN: Could not find plugin install flow bundle in ${path.join(
+      /^use-model-settings-.*\.js$/,
+      applyLinuxComputerUseRendererAvailabilityPatch,
+      `WARN: Could not find model settings bundle in ${path.join(
+        extractedDir,
+        "webview",
+        "assets",
+      )} — skipping Linux Computer Use UI availability patch`,
+    );
+    patchAssetFiles(
       extractedDir,
-      "webview",
-      "assets",
-    )} — skipping Linux Computer Use install flow patch`,
-  );
+      /^use-plugin-install-flow-.*\.js$/,
+      applyLinuxComputerUseInstallFlowPatch,
+      `WARN: Could not find plugin install flow bundle in ${path.join(
+        extractedDir,
+        "webview",
+        "assets",
+      )} — skipping Linux Computer Use install flow patch`,
+    );
+  }
   patchKeybindsSettingsAssets(extractedDir);
 
   const desktopName = patchPackageJson(extractedDir);
@@ -1678,6 +1738,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  COMPUTER_USE_UI_ENV_VAR,
+  COMPUTER_USE_UI_SETTINGS_KEY,
   applyBrowserAnnotationScreenshotPatch,
   applyKeybindsSettingsIndexPatch,
   applyKeybindsSettingsSectionsPatch,
@@ -1687,6 +1749,7 @@ module.exports = {
   applyLinuxComputerUseRendererAvailabilityPatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxFileManagerPatch,
+  isComputerUseUiEnabled,
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
