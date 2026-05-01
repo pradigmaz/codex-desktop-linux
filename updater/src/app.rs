@@ -488,7 +488,10 @@ async fn run_check_cycle(
     paths: &RuntimePaths,
 ) -> Result<()> {
     if let Err(error) = codex_cli::reconcile_if_present(state, paths) {
-        warn!(?error, "unable to reconcile Codex CLI before checking upstream packages");
+        warn!(
+            ?error,
+            "unable to reconcile Codex CLI before checking upstream packages"
+        );
     }
 
     let retrying_failed_update = state.status == UpdateStatus::Failed;

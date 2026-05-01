@@ -949,7 +949,10 @@ mod tests {
         assert_eq!(state.cli_path, None);
         assert_eq!(state.cli_installed_version, None);
         assert_eq!(state.cli_status, CliStatus::NotInstalled);
-        assert_eq!(state.cli_error_message.as_deref(), Some(CLI_NOT_INSTALLED_MESSAGE));
+        assert_eq!(
+            state.cli_error_message.as_deref(),
+            Some(CLI_NOT_INSTALLED_MESSAGE)
+        );
         Ok(())
     }
 
