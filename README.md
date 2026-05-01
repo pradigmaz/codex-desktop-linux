@@ -388,36 +388,6 @@ SemVer policy:
 
 See [CHANGELOG.md](CHANGELOG.md) for per-version detail.
 
-## Core Contributors
-
-- **Project maintainer** — [@ilysenko](https://github.com/ilysenko). Overall direction, install pipeline, ASAR patcher, packaging (`.deb` / `.rpm` / pacman), updater, releases.
-- **Linux Computer Use plugin** — [@avifenesh](https://github.com/avifenesh). Rust MCP backend (`codex-computer-use-linux`), AT-SPI accessibility tree, screenshot capture, `ydotool` input, GNOME Shell window targeting.
-
-## Contributors
-
-This project is shaped by community contributions. In rough order of impact:
-
-- [@Leay15](https://github.com/Leay15) — packaging pipeline, GitHub Actions CI, updater enhancements, upstream-DMG validation workflow
-- [@tjdonley](https://github.com/tjdonley) — ASAR patcher hardening (capture-driven anchors, drift resilience), Computer Use stability fixes
-- [@pradigmaz](https://github.com/pradigmaz) — launcher hardening, browser-annotation fixes, polkit-driven package installs, kernel-backed update lock
-- [@babafish12](https://github.com/babafish12) — Linux keybind settings, warm-start tray launch controls
-- [@AmeerJ97](https://github.com/AmeerJ97) — Electron version detection from upstream app metadata, fail-soft testable patcher
-- [@moabualruz](https://github.com/moabualruz) — user-local desktop integration (split workspace/runtime, opt-in systemd timer)
-- [@LAP87](https://github.com/LAP87) — native Arch Linux (pacman) support for installer and updater
-- [@quantmind-br](https://github.com/quantmind-br) — initial Arch (pacman) packaging
-- [@ProfFlow](https://github.com/ProfFlow) — native openSUSE (zypper) support
-- [@gadicc](https://github.com/gadicc) — mixed-manager updater fix, stale minified-symbol fix
-- [@gel](https://github.com/gel) — Linux opaque-background patcher fix (drift on `gw` symbol)
-- [@RFLXN](https://github.com/RFLXN) — Nix flake source-tree fix
-- [@prideofszeged](https://github.com/prideofszeged) — `7zz` auto-bootstrap when system 7-zip is too old
-- [@baktun95827](https://github.com/baktun95827) — Electron download mirrors and `ydotool` diagnostics
-- [@monkey-w1n5t0n](https://github.com/monkey-w1n5t0n) — webview server race condition / Wayland-GPU fix
-- [@prichardsondev](https://github.com/prichardsondev) — DMG extraction `7zz` symlink-warning handling
-- [@GuimelGMC](https://github.com/GuimelGMC) — RPM packaging fixes
-- [@lalalandau](https://github.com/lalalandau) — DMG extraction handling and fresh-by-default rebuild
-
-Plus everyone who filed bug reports, tested across distros, and reviewed PRs — thank you.
-
 ## Disclaimer
 
 This is an unofficial community project. Codex Desktop is a product of OpenAI. This tool does not redistribute any OpenAI software; it automates the conversion process that users perform on their own copies.
