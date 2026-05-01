@@ -1734,8 +1734,10 @@ mod tests {
             description: None,
             child_count: 0,
             bounds,
+            states: Vec::new(),
             actions,
             value: None,
+            text: None,
             supports_editable_text: false,
         }
     }
