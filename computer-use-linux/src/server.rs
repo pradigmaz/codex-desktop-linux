@@ -373,28 +373,12 @@ impl ComputerUseLinux {
     )]
     async fn perform_action(
         &self,
-        Parameters(params): Parameters<SecondaryActionParams>,
+        Parameters(params): Parameters<ActionParams>,
     ) -> Json<ActionOutput> {
         self.perform_element_action(
             &params,
             "perform_action",
             params.action.as_deref().or(Some("0")),
-        )
-        .await
-    }
-
-    #[tool(
-        name = "perform_secondary_action",
-        description = "Invoke a secondary or named accessibility action exposed by an element. Defaults to the secondary action when present."
-    )]
-    async fn perform_secondary_action(
-        &self,
-        Parameters(params): Parameters<SecondaryActionParams>,
-    ) -> Json<ActionOutput> {
-        self.perform_element_action(
-            &params,
-            "perform_secondary_action",
-            params.action.as_deref(),
         )
         .await
     }
@@ -851,7 +835,7 @@ struct ClickParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-struct SecondaryActionParams {
+struct ActionParams {
     #[serde(default)]
     element_index: Option<u32>,
     #[serde(default)]
@@ -1208,7 +1192,7 @@ impl ComputerUseLinux {
 
     async fn perform_element_action(
         &self,
-        params: &SecondaryActionParams,
+        params: &ActionParams,
         tool_name: &str,
         requested_action: Option<&str>,
     ) -> Json<ActionOutput> {
