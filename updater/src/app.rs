@@ -1277,6 +1277,7 @@ mod tests {
 
     #[test]
     fn prompt_install_cli_does_not_treat_non_executable_file_as_installed() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),

@@ -80,8 +80,7 @@ pub fn preflight(
             state.cli_status = CliStatus::Unknown;
             state.cli_latest_version = None;
             state.cli_error_message = Some(format!(
-                "Could not check the latest {} version: {error}",
-                CLI_PACKAGE_NAME
+                "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
             ));
             persist_state(paths, state)?;
             warn!(?error, "unable to check latest Codex CLI version");
@@ -127,8 +126,7 @@ pub fn preflight(
 
     if refreshed_version != latest_version {
         let message = format!(
-            "Codex CLI upgrade finished but the installed version is still {} instead of {}",
-            refreshed_version, latest_version
+            "Codex CLI upgrade finished but the installed version is still {refreshed_version} instead of {latest_version}"
         );
         state.cli_status = CliStatus::Failed;
         state.cli_error_message = Some(message.clone());
@@ -191,8 +189,7 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
             state.cli_last_verified_at = None;
             state.cli_status = CliStatus::Failed;
             state.cli_error_message = Some(format!(
-                "Could not read the installed {} version: {error}",
-                CLI_PACKAGE_NAME
+                "Could not read the installed {CLI_PACKAGE_NAME} version: {error}"
             ));
             persist_state(paths, state)?;
             warn!(?error, "unable to read installed Codex CLI version");
@@ -242,8 +239,7 @@ pub fn refresh_status(state: &mut PersistedState, paths: &RuntimePaths) -> Resul
                 state.cli_status = CliStatus::Unknown;
             }
             state.cli_error_message = Some(format!(
-                "Could not check the latest {} version: {error}",
-                CLI_PACKAGE_NAME
+                "Could not check the latest {CLI_PACKAGE_NAME} version: {error}"
             ));
             warn!(?error, "unable to check latest Codex CLI version");
         }
@@ -670,6 +666,7 @@ mod tests {
     use crate::{
         config::RuntimePaths,
         state::{CliStatus, PersistedState},
+        test_util::env_lock,
     };
     use chrono::Utc;
     use std::{fs, os::unix::fs::PermissionsExt, path::Path};
@@ -855,6 +852,7 @@ mod tests {
 
     #[test]
     fn refresh_cached_status_invalidates_missing_cached_cli_path() -> Result<()> {
+        let _env_guard = env_lock();
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
         paths.ensure_dirs()?;
@@ -909,6 +907,7 @@ mod tests {
 
     #[test]
     fn refresh_status_marks_missing_cli_as_not_installed() -> Result<()> {
+        let _env_guard = env_lock();
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
         paths.ensure_dirs()?;
@@ -958,6 +957,7 @@ mod tests {
 
     #[test]
     fn reconcile_if_present_upgrades_outdated_cli() -> Result<()> {
+        let _env_guard = env_lock();
         let temp = tempdir()?;
         let paths = test_runtime_paths(temp.path());
         paths.ensure_dirs()?;
