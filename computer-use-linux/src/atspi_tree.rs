@@ -426,12 +426,22 @@ async fn bounds_from_proxies(
     };
     let component = proxies.component().await.ok()?;
     let (x, y, width, height) = component.get_extents(CoordType::Screen).await.ok()?;
-    Some(Bounds {
+    normalize_bounds(Bounds {
         x,
         y,
         width,
         height,
     })
+}
+
+fn normalize_bounds(bounds: Bounds) -> Option<Bounds> {
+    if bounds.width <= 0 || bounds.height <= 0 {
+        return None;
+    }
+    if bounds.x <= i32::MIN / 2 || bounds.y <= i32::MIN / 2 {
+        return None;
+    }
+    Some(bounds)
 }
 
 async fn actions_from_proxies(
