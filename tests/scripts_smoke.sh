@@ -416,6 +416,8 @@ if "if needs_cold_start;" not in runtime_body:
     raise SystemExit("second-instance handoff must skip CLI preflight")
 if "running_app_is_active" not in stop_body or "Preserving webview server" not in stop_body:
     raise SystemExit("stop_owned_webview_server must not stop the live app webview server")
+if "stale_webview_server_pid" not in source or "stop_stale_webview_server" not in source:
+    raise SystemExit("launcher must detect stale deleted webview servers left behind by previous installs")
 if 'ADOPTED_WEBVIEW_PID="$pid"' not in adopt_body:
     raise SystemExit("adopt_existing_webview_server must not mark a running app server as started by this launcher")
 if 'STARTED_WEBVIEW_PID="$pid"' not in adopt_body:
@@ -424,6 +426,8 @@ if "running_app_is_active" not in adopt_body:
     raise SystemExit("adopt_existing_webview_server must detect live-app reuse before cleanup")
 if "if adopt_existing_webview_server; then" not in ensure_body:
     raise SystemExit("ensure_webview_server must split adoption from origin verification")
+if "stop_stale_webview_server" not in ensure_body:
+    raise SystemExit("ensure_webview_server must clear stale deleted webview servers before treating the port as foreign")
 if "Keeping the live app untouched" not in ensure_body:
     raise SystemExit("ensure_webview_server must not stop a live app server when validation fails")
 PY
