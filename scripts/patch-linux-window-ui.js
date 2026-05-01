@@ -1015,6 +1015,95 @@ function applyLinuxComputerUsePluginGatePatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxComputerUseFeaturePatch(currentSource) {
+  const patchedFeaturePattern =
+    /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{env:[A-Za-z_$][\w$]*=process\.env,platform:[A-Za-z_$][\w$]*=process\.platform\}=\{\}\)\{return [A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:/;
+  const windowsOnlyFeaturePattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\{env:([A-Za-z_$][\w$]*)=process\.env,platform:([A-Za-z_$][\w$]*)=process\.platform\}=\{\}\)\{return \4!==`win32`\|\|\3\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==`1`\?\2:\{\.\.\.\2,computerUse:!0,computerUseNodeRepl:!0\}\}/;
+
+  if (patchedFeaturePattern.test(currentSource)) {
+    return currentSource;
+  }
+
+  if (windowsOnlyFeaturePattern.test(currentSource)) {
+    return currentSource.replace(
+      windowsOnlyFeaturePattern,
+      (_, fnName, featuresVar, envVar, platformVar) =>
+        `function ${fnName}(${featuresVar},{env:${envVar}=process.env,platform:${platformVar}=process.platform}={}){return ${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}!==\`win32\`||${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==\`1\`?${featuresVar}:{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}}`,
+    );
+  }
+
+  if (currentSource.includes("CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE")) {
+    console.warn(
+      "WARN: Could not find Computer Use desktop feature gate — skipping Linux Computer Use feature patch",
+    );
+  }
+
+  return currentSource;
+}
+
+function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const platformPredicateNeedle = "function hae(e){return e===`macOS`||e===`windows`}";
+  const platformPredicatePatch =
+    "function hae(e){return e===`macOS`||e===`windows`||e===`linux`}";
+  if (patchedSource.includes(platformPredicatePatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(platformPredicateNeedle)) {
+    patchedSource = patchedSource.replace(platformPredicateNeedle, platformPredicatePatch);
+  }
+
+  const availabilityNeedle =
+    "let m=a&&i&&s===`electron`&&u&&(c||p),h=m&&!c&&f.enabled&&!f.isLoading,g=m&&f.isLoading,_=m&&(c||f.isLoading),v;";
+  const availabilityHostLocalLinuxPatch =
+    "let m=a&&i&&s===`electron`&&(l===`linux`||u&&(c||p)),h=m&&!c&&(l===`linux`||f.enabled)&&!f.isLoading,g=m&&l!==`linux`&&f.isLoading,_=m&&(c||l!==`linux`&&f.isLoading),v;";
+  const availabilityPatch =
+    "let m=a&&(i||l===`linux`)&&s===`electron`&&(l===`linux`||u&&(c||p)),h=m&&!c&&(l===`linux`||f.enabled)&&!f.isLoading,g=m&&l!==`linux`&&f.isLoading,_=m&&(c||l!==`linux`&&f.isLoading),v;";
+  if (patchedSource.includes(availabilityPatch)) {
+    return patchedSource;
+  }
+
+  if (patchedSource.includes(availabilityHostLocalLinuxPatch)) {
+    return patchedSource.replace(availabilityHostLocalLinuxPatch, availabilityPatch);
+  }
+
+  if (patchedSource.includes(availabilityNeedle)) {
+    return patchedSource.replace(availabilityNeedle, availabilityPatch);
+  }
+
+  if (currentSource.includes("featureName:`computer_use`") && currentSource.includes("isComputerUseAvailable")) {
+    console.warn(
+      "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use UI availability patch",
+    );
+  }
+
+  return patchedSource;
+}
+
+function applyLinuxComputerUseInstallFlowPatch(currentSource) {
+  const availabilityNeedle =
+    "ne=f({featureName:`computer_use`,hostId:t}),re=!ne.isLoading&&ne.enabled,";
+  const availabilityPatch =
+    "ne=f({featureName:`computer_use`,hostId:t}),re=!ne.isLoading&&ne.enabled||navigator.userAgent.includes(`Linux`),";
+
+  if (currentSource.includes(availabilityPatch)) {
+    return currentSource;
+  }
+
+  if (currentSource.includes(availabilityNeedle)) {
+    return currentSource.replace(availabilityNeedle, availabilityPatch);
+  }
+
+  if (currentSource.includes("featureName:`computer_use`")) {
+    console.warn(
+      "WARN: Could not find Computer Use install flow gate — skipping Linux Computer Use install flow patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -1428,6 +1517,7 @@ function patchMainBundleSource(source, iconAsset) {
   patched = applyLinuxFileManagerPatch(patched);
   patched = applyLinuxTrayPatch(patched, iconPathExpression);
   patched = applyLinuxSingleInstancePatch(patched);
+  patched = applyLinuxComputerUseFeaturePatch(patched);
   patched = applyLinuxComputerUsePluginGatePatch(patched);
   patched = applyLinuxTrayCloseSettingPatch(patched);
   patched = applyLinuxSettingsPersistencePatch(patched);
@@ -1541,6 +1631,26 @@ function patchExtractedApp(extractedDir) {
       "assets",
     )} — skipping translucent sidebar default patch`,
   );
+  patchAssetFiles(
+    extractedDir,
+    /^use-model-settings-.*\.js$/,
+    applyLinuxComputerUseRendererAvailabilityPatch,
+    `WARN: Could not find model settings bundle in ${path.join(
+      extractedDir,
+      "webview",
+      "assets",
+    )} — skipping Linux Computer Use UI availability patch`,
+  );
+  patchAssetFiles(
+    extractedDir,
+    /^use-plugin-install-flow-.*\.js$/,
+    applyLinuxComputerUseInstallFlowPatch,
+    `WARN: Could not find plugin install flow bundle in ${path.join(
+      extractedDir,
+      "webview",
+      "assets",
+    )} — skipping Linux Computer Use install flow patch`,
+  );
   patchKeybindsSettingsAssets(extractedDir);
 
   const desktopName = patchPackageJson(extractedDir);
@@ -1573,6 +1683,9 @@ module.exports = {
   applyKeybindsSettingsSectionsPatch,
   applyKeybindsSettingsSharedPatch,
   applyLinuxComputerUsePluginGatePatch,
+  applyLinuxComputerUseFeaturePatch,
+  applyLinuxComputerUseRendererAvailabilityPatch,
+  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxFileManagerPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
