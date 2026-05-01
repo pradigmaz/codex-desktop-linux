@@ -3,6 +3,16 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.1] - 2026-04-30
+
+### Added
+
+- New GitHub Actions workflow `upstream-build-app.yml` that builds `make build-app` against the real upstream `Codex.dmg`, caches the DMG between runs when upstream metadata is unchanged, and records the tested DMG URL, `Last-Modified`, `ETag`, `Content-Length`, `SHA-256`, size, and test timestamp in the job summary plus an uploaded JSON artifact.
+
+### Changed
+
+- Script smoke tests now assert that the upstream-DMG CI workflow continues to track DMG provenance and cache behavior, reducing the chance that future CI edits silently drop reproducibility metadata for upstream build validation.
+
 ## [0.6.0] - 2026-04-30
 
 ### Added

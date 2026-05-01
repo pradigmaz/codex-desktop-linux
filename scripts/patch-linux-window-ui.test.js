@@ -264,6 +264,31 @@ test("adds Linux launch actions when captured window identifiers contain dollar 
   assert.match(patched, /z\.navigateToRoute\(r\$,e\),ae\(r\$\)/);
 });
 
+test("skips the launch-action patch without throwing when upstream startup architecture changes", () => {
+  const source = [
+    "async function Sg(){",
+    "let{startedAtMs:r,setSparkleBridgeHandlers:s,setSecondInstanceArgsHandler:c}=e.o(),",
+    "F=Lp({windowServices:M,ensureHostWindow:M.ensureHostWindow});",
+    "e.mn().info(`Launching app`,{safe:{platform:process.platform,agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
+    "let k=Date.now();",
+    "await n.app.whenReady();",
+    "let M=ng({windowManager:S}),",
+    "te=zf();",
+    "s({onInstallUpdatesRequested:te.allowQuitTemporarilyForUpdateInstall,isTrustedIpcEvent:A});",
+    "c(e=>{F.deepLinks.queueProcessArgs(e)}),",
+    "k=Date.now(),",
+    "F.deepLinks.registerProtocolClient(),",
+    "k=Date.now();",
+    "let ie=await M.ensureHostWindow(y);",
+    "ie&&(ie.isMinimized()&&ie.restore(),ie.show(),ie.focus()),",
+    "k=Date.now(),",
+    "await F.deepLinks.flushPendingDeepLinks(),",
+    "w(`startup complete`,r)}",
+  ].join("");
+
+  assert.doesNotThrow(() => applyLinuxLaunchActionArgsPatch(source));
+});
+
 test("gates current close-to-tray setting through the captured global state", () => {
   const source = "let j=KD({moduleDir:__dirname});let M=FM({buildFlavor:a,globalState:j.globalState,canHideLastLocalWindowToTray:()=>O,disposables:k});t.Mr().info(`Launching app`);";
   const patched = applyPatchTwice(applyLinuxTrayCloseSettingPatch, source);

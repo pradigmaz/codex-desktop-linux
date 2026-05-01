@@ -288,6 +288,22 @@ SCRIPT
     [ -z "$second_line" ] || fail "Expected make build-app default DMG argument to be empty so install.sh falls back to reuse/download, got: $(cat "$install_log")"
 }
 
+test_upstream_build_app_workflow_tracks_dmg_metadata() {
+    info "Checking upstream build-app workflow metadata and cache behavior"
+    local workflow="$REPO_DIR/.github/workflows/upstream-build-app.yml"
+
+    assert_file_exists "$workflow"
+    assert_contains "$workflow" 'name: Upstream Build App'
+    assert_contains "$workflow" 'UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
+    assert_contains "$workflow" 'actions/cache@v4'
+    assert_contains "$workflow" 'path: /tmp/codex-upstream-ci/Codex.dmg'
+    assert_contains "$workflow" 'Last-Modified'
+    assert_contains "$workflow" 'sha256sum'
+    assert_contains "$workflow" 'make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg'
+    assert_contains "$workflow" 'DMG Last-Modified'
+    assert_contains "$workflow" 'DMG SHA-256'
+}
+
 test_installer_detects_electron_version_from_plist() {
     info "Checking Electron version detection from app metadata"
     local workspace="$TMP_DIR/electron-version"
@@ -1391,6 +1407,7 @@ main() {
     test_rpm_builder_smoke
     test_missing_input_failure
     test_make_build_app_uses_installer_download_flow_by_default
+    test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_launcher_template_sanity
