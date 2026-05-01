@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] - 2026-05-01
+
+### Changed
+
+- Missing Codex CLI recovery is now exposed as an explicit `cli_status: NotInstalled` state in updater status output and persisted state, instead of overloading `Unknown`.
+- Automatic installation of a missing Codex CLI is now documented and enforced as launcher-scoped behavior; the daemon and `codex-update-manager status` only report and notify when the dependency is missing.
+
+### Fixed
+
+- Launcher error messages now distinguish between a CLI that is missing versus an automatic installation attempt that failed, clarifying the supported recovery path.
+- Missing-CLI desktop notifications now key off the explicit `NotInstalled` state instead of inferring absence from cleared fields.
+
 ## [0.6.1] - 2026-04-30
 
 ### Added
