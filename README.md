@@ -125,8 +125,6 @@ Either path enables the in-app controls on subsequent builds. Use of this option
 
 To opt back out, unset the env var and remove or set the settings flag to `false`.
 
-The Linux Computer Use plugin and these UI surfaces are designed and maintained by [@avifenesh](https://github.com/avifenesh).
-
 ### Side-by-side dev variant
 
 If you'd like to test the backend without affecting your default install, the side-by-side dev variant builds a separate app under a different ID and webview port:
