@@ -7,7 +7,12 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  COMPUTER_USE_UI_ENV_VAR,
+  COMPUTER_USE_UI_SETTINGS_KEY,
+  applyLinuxComputerUseFeaturePatch,
+  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
+  applyLinuxComputerUseRendererAvailabilityPatch,
   applyLinuxFileManagerPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
@@ -18,6 +23,7 @@ const {
   applyLinuxTrayCloseSettingPatch,
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,
+  isComputerUseUiEnabled,
   patchMainBundleSource,
   patchExtractedApp,
   patchPackageJson,
@@ -65,6 +71,22 @@ function computerUseGateBundleFixture() {
     "var Qt=`openai-bundled`,$t=`browser-use`,en=`chrome-internal`,tn=`computer-use`,nn=`latex-tectonic`;",
     "var $n=[{forceReload:!0,installWhenMissing:!0,name:$t,isEnabled:({features:e})=>e.browserAgentAvailable,migrate:cn},{name:en,isEnabled:({buildFlavor:e})=>rn(e)},{name:tn,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:wn},{name:nn,isEnabled:()=>!0}];",
   ].join("");
+}
+
+function computerUseFeatureBundleFixture() {
+  return "function me(e,{env:t=process.env,platform:n=process.platform}={}){return n!==`win32`||t.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==`1`?e:{...e,computerUse:!0,computerUseNodeRepl:!0}}";
+}
+
+function computerUseRendererAvailabilityBundleFixture() {
+  return [
+    "function hae(e){return e===`macOS`||e===`windows`}",
+    "function LS(e){let t=(0,q.c)(10),{hostId:n,featureName:r,defaultEnabled:i}=e,a=i===void 0?!0:i,{data:o,isLoading:s}=N(Wa,n),c;t[0]===o?c=t[1]:(c=o===void 0?[]:o,t[0]=o,t[1]=c);let l=c,u;if(t[2]!==r||t[3]!==l){let e;t[5]===r?e=t[6]:(e=e=>e.name===r,t[5]=r,t[6]=e),u=l.find(e),t[2]=r,t[3]=l,t[4]=u}else u=t[4];let d=u?.enabled??a,f;return t[7]!==s||t[8]!==d?(f={enabled:d,isLoading:s},t[7]=s,t[8]=d,t[9]=f):f=t[9],f}",
+    "function RS(e){let t=(0,q.c)(8),{enabled:n,hostId:r,isHostLocal:i}=e,a=n===void 0?!0:n,o=r===void 0?R:r,s=Kn(),{isLoading:c,platform:l}=Hr(),u=Vn(`1506311413`),d;t[0]===o?d=t[1]:(d={featureName:`computer_use`,hostId:o},t[0]=o,t[1]=d);let f=LS(d),p;t[2]===l?p=t[3]:(p=hae(l),t[2]=l,t[3]=p);let m=a&&i&&s===`electron`&&u&&(c||p),h=m&&!c&&f.enabled&&!f.isLoading,g=m&&f.isLoading,_=m&&(c||f.isLoading),v;return t[4]!==h||t[5]!==g||t[6]!==_?(v={available:h,isFetching:g,isLoading:_},t[4]=h,t[5]=g,t[6]=_,t[7]=v):v=t[7],v}",
+  ].join("");
+}
+
+function computerUseInstallFlowBundleFixture() {
+  return "function Qe({forceReloadPlugins:e,hostId:t}){let ne=f({featureName:`computer_use`,hostId:t}),re=!ne.isLoading&&ne.enabled,[L,R]=(0,Z.useState)({});return re}";
 }
 
 function currentLaunchActionBundleFixture() {
@@ -470,6 +492,173 @@ test("fails hard when the Computer Use gate is recognizable but unpatchable", ()
     () => applyLinuxComputerUsePluginGatePatch("var tn=`computer-use`;var x=[{name:tn,isEnabled:({features:e,platform:t})=>isMac(t)&&e.computerUse,migrate:wn}];"),
     /Required Linux Computer Use plugin gate patch failed/,
   );
+});
+
+test("enables Computer Use desktop features on Linux", () => {
+  const patched = applyPatchTwice(
+    applyLinuxComputerUseFeaturePatch,
+    computerUseFeatureBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /return n===`linux`\?\{\.\.\.e,computerUse:!0,computerUseNodeRepl:!0\}:n!==`win32`\|\|t\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==`1`\?e:\{\.\.\.e,computerUse:!0,computerUseNodeRepl:!0\}/,
+  );
+  assert.match(patched, /CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE/);
+});
+
+test("shows Computer Use plugin UI on Linux without the upstream rollout flag", () => {
+  const patched = applyPatchTwice(
+    applyLinuxComputerUseRendererAvailabilityPatch,
+    computerUseRendererAvailabilityBundleFixture(),
+  );
+
+  assert.match(patched, /function hae\(e\)\{return e===`macOS`\|\|e===`windows`\|\|e===`linux`\}/);
+  assert.match(
+    patched,
+    /let m=a&&\(i\|\|l===`linux`\)&&s===`electron`&&\(l===`linux`\|\|u&&\(c\|\|p\)\),h=m&&!c&&\(l===`linux`\|\|f\.enabled\)&&!f\.isLoading,g=m&&l!==`linux`&&f\.isLoading,_=m&&\(c\|\|l!==`linux`&&f\.isLoading\),v;/,
+  );
+});
+
+test("allows Computer Use install flow on Linux", () => {
+  const patched = applyPatchTwice(
+    applyLinuxComputerUseInstallFlowPatch,
+    computerUseInstallFlowBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /re=!ne\.isLoading&&ne\.enabled\|\|navigator\.userAgent\.includes\(`Linux`\)/,
+  );
+});
+
+function withIsolatedHome(body) {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-cu-ui-test-"));
+  const previousHome = process.env.HOME;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousFlag = process.env[COMPUTER_USE_UI_ENV_VAR];
+  process.env.HOME = tempHome;
+  delete process.env.XDG_CONFIG_HOME;
+  delete process.env[COMPUTER_USE_UI_ENV_VAR];
+  try {
+    return body(tempHome);
+  } finally {
+    if (previousHome == null) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdg == null) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdg;
+    }
+    if (previousFlag == null) {
+      delete process.env[COMPUTER_USE_UI_ENV_VAR];
+    } else {
+      process.env[COMPUTER_USE_UI_ENV_VAR] = previousFlag;
+    }
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+}
+
+function writeSettingsFile(home, content) {
+  const dir = path.join(home, ".config", "codex-desktop");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "settings.json"), content, "utf8");
+}
+
+test("isComputerUseUiEnabled defaults to false without env var or settings flag", () => {
+  withIsolatedHome(() => {
+    assert.equal(isComputerUseUiEnabled(), false);
+  });
+});
+
+test("isComputerUseUiEnabled honours the env var", () => {
+  withIsolatedHome(() => {
+    process.env[COMPUTER_USE_UI_ENV_VAR] = "1";
+    assert.equal(isComputerUseUiEnabled(), true);
+    process.env[COMPUTER_USE_UI_ENV_VAR] = "true";
+    assert.equal(isComputerUseUiEnabled(), false, "only the literal string '1' should opt in");
+  });
+});
+
+test("isComputerUseUiEnabled honours the persisted settings flag", () => {
+  withIsolatedHome((home) => {
+    writeSettingsFile(home, JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: true }));
+    assert.equal(isComputerUseUiEnabled(), true);
+  });
+});
+
+test("isComputerUseUiEnabled treats settings flag false/missing as opt-out", () => {
+  withIsolatedHome((home) => {
+    writeSettingsFile(home, JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: false }));
+    assert.equal(isComputerUseUiEnabled(), false);
+    writeSettingsFile(home, JSON.stringify({ unrelated: true }));
+    assert.equal(isComputerUseUiEnabled(), false);
+  });
+});
+
+test("isComputerUseUiEnabled fails closed when settings.json is malformed", () => {
+  withIsolatedHome((home) => {
+    writeSettingsFile(home, "{not valid json");
+    assert.equal(isComputerUseUiEnabled(), false);
+  });
+});
+
+test("patchMainBundleSource skips Computer Use feature patch by default", () => {
+  withIsolatedHome(() => {
+    const source = [
+      mainBundlePrefix,
+      computerUseFeatureBundleFixture(),
+      computerUseGateBundleFixture(),
+    ].join("");
+
+    const patched = patchMainBundleSource(source, null);
+
+    assert.doesNotMatch(
+      patched,
+      /return n===`linux`\?\{\.\.\.e,computerUse:!0,computerUseNodeRepl:!0\}/,
+    );
+    assert.match(patched, /\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse/);
+  });
+});
+
+test("patchMainBundleSource applies Computer Use feature patch when env var is set", () => {
+  withIsolatedHome(() => {
+    process.env[COMPUTER_USE_UI_ENV_VAR] = "1";
+    const source = [
+      mainBundlePrefix,
+      computerUseFeatureBundleFixture(),
+      computerUseGateBundleFixture(),
+    ].join("");
+
+    const patched = patchMainBundleSource(source, null);
+
+    assert.match(
+      patched,
+      /return n===`linux`\?\{\.\.\.e,computerUse:!0,computerUseNodeRepl:!0\}/,
+    );
+    assert.match(patched, /\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse/);
+  });
+});
+
+test("patchMainBundleSource applies Computer Use feature patch when settings.json flag is set", () => {
+  withIsolatedHome((home) => {
+    writeSettingsFile(home, JSON.stringify({ [COMPUTER_USE_UI_SETTINGS_KEY]: true }));
+    const source = [
+      mainBundlePrefix,
+      computerUseFeatureBundleFixture(),
+      computerUseGateBundleFixture(),
+    ].join("");
+
+    const patched = patchMainBundleSource(source, null);
+
+    assert.match(
+      patched,
+      /return n===`linux`\?\{\.\.\.e,computerUse:!0,computerUseNodeRepl:!0\}/,
+    );
+  });
 });
 
 test("uses CODEX_APP_ID for Electron desktopName", () => {

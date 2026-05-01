@@ -1,6 +1,7 @@
 mod atspi_tree;
 mod diagnostics;
 mod gnome_extension;
+mod remote_desktop;
 mod screenshot;
 mod server;
 mod terminal;

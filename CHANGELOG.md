@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Missing Codex CLI recovery is now exposed as an explicit `cli_status: NotInstalled` state in updater status output and persisted state, instead of overloading `Unknown`.
 - Automatic installation of a missing Codex CLI is now documented and enforced as launcher-scoped behavior; the daemon and `codex-update-manager status` only report and notify when the dependency is missing.
+- The Computer Use in-app UI surface is now opt-in. The MCP backend still registers by default; the UI controls are enabled when the user sets `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` at build time, or persists `"codex-linux-computer-use-ui-enabled": true` in `~/.config/codex-desktop/settings.json` (also honoured by the `codex-update-manager` user service across rebuilds). Existing users who relied on the UI being on by default need to set one of these once.
+
+### Added
+
+- New `isComputerUseUiEnabled()` helper in `scripts/patch-linux-window-ui.js` that reads both the env var and the persisted settings flag.
+- Smoke test `test_linux_computer_use_ui_opt_in_smoke` covering all three branches (default off, env-var on, settings-flag on).
 
 ### Fixed
 

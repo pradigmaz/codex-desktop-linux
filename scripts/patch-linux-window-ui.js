@@ -27,6 +27,61 @@ function findIconAsset(extractedDir) {
 const keybindsSettingsAsset = "keybinds-settings-linux.js";
 const linuxKeybindOverridesKey = "codex-linux-keybind-overrides";
 
+const COMPUTER_USE_UI_ENV_VAR = "CODEX_LINUX_ENABLE_COMPUTER_USE_UI";
+const COMPUTER_USE_UI_SETTINGS_KEY = "codex-linux-computer-use-ui-enabled";
+
+// Two opt-in surfaces, both checked at build time:
+//
+// 1. Env var `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` — for ad-hoc builds
+//    (`make build-app`, manual `make package`).
+// 2. Persisted flag `codex-linux-computer-use-ui-enabled: true` in
+//    `~/.config/codex-desktop/settings.json` — for the auto-updater path,
+//    where the systemd user service does not inherit interactive shell env.
+//
+// Either path enables the three Statsig-bypass-style Computer Use UI patches
+// (`applyLinuxComputerUseFeaturePatch`, `applyLinuxComputerUseRendererAvailabilityPatch`,
+// `applyLinuxComputerUseInstallFlowPatch`). The plugin manifest gate
+// (`applyLinuxComputerUsePluginGatePatch`) is pure platform-port glue and
+// stays unconditional — it is what we have shipped on by default since the
+// project's first release.
+function isComputerUseUiEnabled(env = process.env) {
+  if (env[COMPUTER_USE_UI_ENV_VAR] === "1") {
+    return true;
+  }
+  return readComputerUseUiSettingsFlag(env);
+}
+
+function readComputerUseUiSettingsFlag(env) {
+  const settingsPath = computerUseUiSettingsPath(env);
+  if (settingsPath == null) {
+    return false;
+  }
+  try {
+    if (!fs.existsSync(settingsPath)) {
+      return false;
+    }
+    const raw = fs.readFileSync(settingsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    return parsed[COMPUTER_USE_UI_SETTINGS_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+function computerUseUiSettingsPath(env) {
+  const xdgConfig = env.XDG_CONFIG_HOME;
+  const home = env.HOME;
+  const configHome = (xdgConfig && xdgConfig.length > 0)
+    ? xdgConfig
+    : home
+      ? path.join(home, ".config")
+      : null;
+  return configHome == null ? null : path.join(configHome, "codex-desktop", "settings.json");
+}
+
 // Lookback/lookahead windows used when searching for the nearest minified
 // identifier or surrounding context around a regex anchor in the bundle.
 // Sized empirically to the typical distance between a feature's anchor and
@@ -1078,6 +1133,95 @@ function applyLinuxComputerUsePluginGatePatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxComputerUseFeaturePatch(currentSource) {
+  const patchedFeaturePattern =
+    /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{env:[A-Za-z_$][\w$]*=process\.env,platform:[A-Za-z_$][\w$]*=process\.platform\}=\{\}\)\{return [A-Za-z_$][\w$]*===`linux`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:/;
+  const windowsOnlyFeaturePattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\{env:([A-Za-z_$][\w$]*)=process\.env,platform:([A-Za-z_$][\w$]*)=process\.platform\}=\{\}\)\{return \4!==`win32`\|\|\3\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==`1`\?\2:\{\.\.\.\2,computerUse:!0,computerUseNodeRepl:!0\}\}/;
+
+  if (patchedFeaturePattern.test(currentSource)) {
+    return currentSource;
+  }
+
+  if (windowsOnlyFeaturePattern.test(currentSource)) {
+    return currentSource.replace(
+      windowsOnlyFeaturePattern,
+      (_, fnName, featuresVar, envVar, platformVar) =>
+        `function ${fnName}(${featuresVar},{env:${envVar}=process.env,platform:${platformVar}=process.platform}={}){return ${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}:${platformVar}!==\`win32\`||${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE!==\`1\`?${featuresVar}:{...${featuresVar},computerUse:!0,computerUseNodeRepl:!0}}`,
+    );
+  }
+
+  if (currentSource.includes("CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE")) {
+    console.warn(
+      "WARN: Could not find Computer Use desktop feature gate — skipping Linux Computer Use feature patch",
+    );
+  }
+
+  return currentSource;
+}
+
+function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const platformPredicateNeedle = "function hae(e){return e===`macOS`||e===`windows`}";
+  const platformPredicatePatch =
+    "function hae(e){return e===`macOS`||e===`windows`||e===`linux`}";
+  if (patchedSource.includes(platformPredicatePatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(platformPredicateNeedle)) {
+    patchedSource = patchedSource.replace(platformPredicateNeedle, platformPredicatePatch);
+  }
+
+  const availabilityNeedle =
+    "let m=a&&i&&s===`electron`&&u&&(c||p),h=m&&!c&&f.enabled&&!f.isLoading,g=m&&f.isLoading,_=m&&(c||f.isLoading),v;";
+  const availabilityHostLocalLinuxPatch =
+    "let m=a&&i&&s===`electron`&&(l===`linux`||u&&(c||p)),h=m&&!c&&(l===`linux`||f.enabled)&&!f.isLoading,g=m&&l!==`linux`&&f.isLoading,_=m&&(c||l!==`linux`&&f.isLoading),v;";
+  const availabilityPatch =
+    "let m=a&&(i||l===`linux`)&&s===`electron`&&(l===`linux`||u&&(c||p)),h=m&&!c&&(l===`linux`||f.enabled)&&!f.isLoading,g=m&&l!==`linux`&&f.isLoading,_=m&&(c||l!==`linux`&&f.isLoading),v;";
+  if (patchedSource.includes(availabilityPatch)) {
+    return patchedSource;
+  }
+
+  if (patchedSource.includes(availabilityHostLocalLinuxPatch)) {
+    return patchedSource.replace(availabilityHostLocalLinuxPatch, availabilityPatch);
+  }
+
+  if (patchedSource.includes(availabilityNeedle)) {
+    return patchedSource.replace(availabilityNeedle, availabilityPatch);
+  }
+
+  if (currentSource.includes("featureName:`computer_use`") && currentSource.includes("isComputerUseAvailable")) {
+    console.warn(
+      "WARN: Could not find Computer Use renderer availability gate — skipping Linux Computer Use UI availability patch",
+    );
+  }
+
+  return patchedSource;
+}
+
+function applyLinuxComputerUseInstallFlowPatch(currentSource) {
+  const availabilityNeedle =
+    "ne=f({featureName:`computer_use`,hostId:t}),re=!ne.isLoading&&ne.enabled,";
+  const availabilityPatch =
+    "ne=f({featureName:`computer_use`,hostId:t}),re=!ne.isLoading&&ne.enabled||navigator.userAgent.includes(`Linux`),";
+
+  if (currentSource.includes(availabilityPatch)) {
+    return currentSource;
+  }
+
+  if (currentSource.includes(availabilityNeedle)) {
+    return currentSource.replace(availabilityNeedle, availabilityPatch);
+  }
+
+  if (currentSource.includes("featureName:`computer_use`")) {
+    console.warn(
+      "WARN: Could not find Computer Use install flow gate — skipping Linux Computer Use install flow patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -1524,6 +1668,7 @@ function patchMainBundleSource(source, iconAsset) {
   let patched = source;
   const iconPathExpression =
     iconAsset == null ? null : `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
+  const enableComputerUseUi = isComputerUseUiEnabled();
   patched = applyLinuxQuitGuardPatch(patched);
   patched = applyLinuxWindowOptionsPatch(patched, iconAsset);
   patched = applyLinuxMenuPatch(patched);
@@ -1532,6 +1677,9 @@ function patchMainBundleSource(source, iconAsset) {
   patched = applyLinuxFileManagerPatch(patched);
   patched = applyLinuxTrayPatch(patched, iconPathExpression);
   patched = applyLinuxSingleInstancePatch(patched);
+  if (enableComputerUseUi) {
+    patched = applyLinuxComputerUseFeaturePatch(patched);
+  }
   patched = applyLinuxComputerUsePluginGatePatch(patched);
   patched = applyLinuxTrayCloseSettingPatch(patched);
   patched = applyLinuxSettingsPersistencePatch(patched);
@@ -1645,6 +1793,28 @@ function patchExtractedApp(extractedDir) {
       "assets",
     )} — skipping translucent sidebar default patch`,
   );
+  if (isComputerUseUiEnabled()) {
+    patchAssetFiles(
+      extractedDir,
+      /^use-model-settings-.*\.js$/,
+      applyLinuxComputerUseRendererAvailabilityPatch,
+      `WARN: Could not find model settings bundle in ${path.join(
+        extractedDir,
+        "webview",
+        "assets",
+      )} — skipping Linux Computer Use UI availability patch`,
+    );
+    patchAssetFiles(
+      extractedDir,
+      /^use-plugin-install-flow-.*\.js$/,
+      applyLinuxComputerUseInstallFlowPatch,
+      `WARN: Could not find plugin install flow bundle in ${path.join(
+        extractedDir,
+        "webview",
+        "assets",
+      )} — skipping Linux Computer Use install flow patch`,
+    );
+  }
   patchKeybindsSettingsAssets(extractedDir);
 
   const desktopName = patchPackageJson(extractedDir);
@@ -1672,14 +1842,20 @@ if (require.main === module) {
 }
 
 module.exports = {
+  COMPUTER_USE_UI_ENV_VAR,
+  COMPUTER_USE_UI_SETTINGS_KEY,
   applyBrowserAnnotationScreenshotPatch,
   applyKeybindsSettingsIndexPatch,
   applyKeybindsSettingsSectionsPatch,
   applyKeybindsSettingsSharedPatch,
   applyLinuxComputerUsePluginGatePatch,
+  applyLinuxComputerUseFeaturePatch,
+  applyLinuxComputerUseRendererAvailabilityPatch,
+  applyLinuxComputerUseInstallFlowPatch,
   applyLinuxFileManagerPatch,
-  applyLinuxQuitGuardPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
+  applyLinuxQuitGuardPatch,
+  isComputerUseUiEnabled,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,

@@ -3,6 +3,10 @@ use crate::atspi_tree::{
 };
 use crate::diagnostics::{doctor_report, setup_accessibility_report, DoctorReport, SetupReport};
 use crate::gnome_extension::{setup_window_targeting_report, WindowTargetingSetupReport};
+use crate::remote_desktop::{
+    click as portal_click, drag as portal_drag, scroll as portal_scroll,
+    start_portal_pointer_session, PointerButton, PortalPointerSession, ScrollDirection,
+};
 use crate::screenshot::{capture_screenshot, ScreenshotCapture};
 use crate::windows::{
     focus_window_target, focused_window, list_windows, resolve_window_target,
@@ -21,12 +25,14 @@ use std::{
     path::PathBuf,
     process::{Command, Output},
     sync::{Arc, Mutex},
+    thread,
+    time::Duration,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ComputerUseLinux {
     last_nodes: Arc<Mutex<Vec<AccessibilityNode>>>,
-    last_screenshot_size: Arc<Mutex<Option<ScreenSize>>>,
+    portal_pointer_session: Arc<Mutex<Option<PortalPointerSession>>>,
 }
 
 #[tool_router]
@@ -184,17 +190,10 @@ impl ComputerUseLinux {
             });
         let (screenshot, screenshot_error) = if include_screenshot {
             match capture_screenshot().await {
-                Ok(capture) => {
-                    self.cache_screenshot_size(capture.width, capture.height);
-                    (Some(capture), None)
-                }
-                Err(error) => {
-                    self.clear_screenshot_size();
-                    (None, Some(error.to_string()))
-                }
+                Ok(capture) => (Some(capture), None),
+                Err(error) => (None, Some(error.to_string())),
             }
         } else {
-            self.clear_screenshot_size();
             (None, None)
         };
         let (accessibility_tree, accessibility_error) =
@@ -260,7 +259,7 @@ impl ComputerUseLinux {
         name = "click",
         description = "Click an element by index or pixel coordinates from screenshot."
     )]
-    fn click(&self, Parameters(params): Parameters<ClickParams>) -> Json<ActionOutput> {
+    async fn click(&self, Parameters(params): Parameters<ClickParams>) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
         let (x, y) = match self.resolve_target_point(params.x, params.y, params.element_index) {
             Ok(point) => point,
@@ -276,7 +275,53 @@ impl ComputerUseLinux {
         };
         let button = mouse_button_code(params.button.as_deref());
         let click_count = params.click_count.unwrap_or(1).clamp(1, 10).to_string();
-        let (x, y) = self.to_ydotool_absolute_point(x, y);
+        if let Some(session) = self.cached_portal_pointer_session() {
+            match portal_click(
+                &session,
+                x,
+                y,
+                PointerButton::from_name(params.button.as_deref()),
+                params.click_count.unwrap_or(1).clamp(1, 10),
+            )
+            .await
+            {
+                Ok(()) => {
+                    return Json(ActionOutput {
+                        ok: true,
+                        implemented: true,
+                        action: "click".to_string(),
+                        message: "Action sent through the remote desktop portal.".to_string(),
+                        received,
+                    });
+                }
+                Err(_) => self.clear_portal_pointer_session(),
+            }
+        } else if self.should_prefer_portal_pointer_backend() {
+            match self.ensure_portal_pointer_session().await {
+                Ok(Some(session)) => match portal_click(
+                    &session,
+                    x,
+                    y,
+                    PointerButton::from_name(params.button.as_deref()),
+                    params.click_count.unwrap_or(1).clamp(1, 10),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        return Json(ActionOutput {
+                            ok: true,
+                            implemented: true,
+                            action: "click".to_string(),
+                            message: "Action sent through the remote desktop portal.".to_string(),
+                            received,
+                        });
+                    }
+                    Err(_) => self.clear_portal_pointer_session(),
+                },
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
         let result = run_ydotool_sequence(&[
             absolute_mousemove_args(x, y),
             vec![
@@ -320,7 +365,7 @@ impl ComputerUseLinux {
         name = "scroll",
         description = "Scroll an element in a direction by a number of pages."
     )]
-    fn scroll(&self, Parameters(params): Parameters<ScrollParams>) -> Json<ActionOutput> {
+    async fn scroll(&self, Parameters(params): Parameters<ScrollParams>) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
         let units = ((params.pages.unwrap_or(1.0).abs().max(0.1) * 5.0).round() as i32).max(1);
         let target_point =
@@ -336,6 +381,55 @@ impl ComputerUseLinux {
                     });
                 }
             };
+        let direction = match params.direction.to_ascii_lowercase().as_str() {
+            "up" => ScrollDirection::Up,
+            "down" => ScrollDirection::Down,
+            "left" => ScrollDirection::Left,
+            "right" => ScrollDirection::Right,
+            _ => {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "scroll".to_string(),
+                    message: "Unsupported scroll direction; expected up, down, left, or right."
+                        .to_string(),
+                    received,
+                });
+            }
+        };
+        if let Some(session) = self.cached_portal_pointer_session() {
+            match portal_scroll(&session, target_point, direction, units).await {
+                Ok(()) => {
+                    return Json(ActionOutput {
+                        ok: true,
+                        implemented: true,
+                        action: "scroll".to_string(),
+                        message: "Action sent through the remote desktop portal.".to_string(),
+                        received,
+                    });
+                }
+                Err(_) => self.clear_portal_pointer_session(),
+            }
+        } else if self.should_prefer_portal_pointer_backend() {
+            match self.ensure_portal_pointer_session().await {
+                Ok(Some(session)) => match portal_scroll(&session, target_point, direction, units)
+                    .await
+                {
+                    Ok(()) => {
+                        return Json(ActionOutput {
+                            ok: true,
+                            implemented: true,
+                            action: "scroll".to_string(),
+                            message: "Action sent through the remote desktop portal.".to_string(),
+                            received,
+                        });
+                    }
+                    Err(_) => self.clear_portal_pointer_session(),
+                },
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
         let (dx, dy) = match params.direction.to_ascii_lowercase().as_str() {
             "up" => (0, units),
             "down" => (0, -units),
@@ -354,7 +448,6 @@ impl ComputerUseLinux {
         };
         let mut sequence = Vec::new();
         if let Some((x, y)) = target_point {
-            let (x, y) = self.to_ydotool_absolute_point(x, y);
             sequence.push(absolute_mousemove_args(x, y));
         }
         sequence.push(wheel_mousemove_args(dx, dy));
@@ -366,14 +459,59 @@ impl ComputerUseLinux {
         name = "drag",
         description = "Drag from one point to another using pixel coordinates."
     )]
-    fn drag(&self, Parameters(params): Parameters<DragParams>) -> Json<ActionOutput> {
+    async fn drag(&self, Parameters(params): Parameters<DragParams>) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
-        let (start_x, start_y) = self.to_ydotool_absolute_point(params.start_x, params.start_y);
-        let (end_x, end_y) = self.to_ydotool_absolute_point(params.end_x, params.end_y);
+        if let Some(session) = self.cached_portal_pointer_session() {
+            match portal_drag(
+                &session,
+                params.start_x,
+                params.start_y,
+                params.end_x,
+                params.end_y,
+            )
+            .await
+            {
+                Ok(()) => {
+                    return Json(ActionOutput {
+                        ok: true,
+                        implemented: true,
+                        action: "drag".to_string(),
+                        message: "Action sent through the remote desktop portal.".to_string(),
+                        received,
+                    });
+                }
+                Err(_) => self.clear_portal_pointer_session(),
+            }
+        } else if self.should_prefer_portal_pointer_backend() {
+            match self.ensure_portal_pointer_session().await {
+                Ok(Some(session)) => match portal_drag(
+                    &session,
+                    params.start_x,
+                    params.start_y,
+                    params.end_x,
+                    params.end_y,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        return Json(ActionOutput {
+                            ok: true,
+                            implemented: true,
+                            action: "drag".to_string(),
+                            message: "Action sent through the remote desktop portal.".to_string(),
+                            received,
+                        });
+                    }
+                    Err(_) => self.clear_portal_pointer_session(),
+                },
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
         let result = run_ydotool_sequence(&[
-            absolute_mousemove_args(start_x, start_y),
+            absolute_mousemove_args(params.start_x, params.start_y),
             vec!["click".to_string(), "0x40".to_string()],
-            absolute_mousemove_args(end_x, end_y),
+            absolute_mousemove_args(params.end_x, params.end_y),
             vec!["click".to_string(), "0x80".to_string()],
         ]);
         Json(action_result("drag", result, received))
@@ -455,7 +593,7 @@ impl ComputerUseLinux {
 #[tool_handler(
     name = "codex-computer-use-linux",
     version = "0.1.0",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees, list/focus GNOME Shell windows when org.gnome.Shell.Introspect or the Codex GNOME Shell extension permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate, element-index click/scroll, key, text, and drag input through ydotool when ydotoold is available. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees, list/focus GNOME Shell windows when org.gnome.Shell.Introspect or the Codex GNOME Shell extension permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate, element-index click/scroll/drag input through the Wayland remote desktop portal when available or through ydotool otherwise. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -743,12 +881,6 @@ impl TypeTextParams {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ScreenSize {
-    width: u32,
-    height: u32,
-}
-
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct ActionOutput {
     ok: bool,
@@ -759,6 +891,44 @@ struct ActionOutput {
 }
 
 impl ComputerUseLinux {
+    fn should_prefer_portal_pointer_backend(&self) -> bool {
+        env::var("CODEX_COMPUTER_USE_FORCE_YDOTOOL_POINTER")
+            .ok()
+            .as_deref()
+            != Some("1")
+            && env::var("XDG_SESSION_TYPE")
+                .ok()
+                .is_some_and(|value| value.eq_ignore_ascii_case("wayland"))
+    }
+
+    fn cached_portal_pointer_session(&self) -> Option<PortalPointerSession> {
+        self.portal_pointer_session
+            .lock()
+            .ok()
+            .and_then(|cached| cached.clone())
+    }
+
+    fn clear_portal_pointer_session(&self) {
+        if let Ok(mut cached) = self.portal_pointer_session.lock() {
+            *cached = None;
+        }
+    }
+
+    async fn ensure_portal_pointer_session(&self) -> Result<Option<PortalPointerSession>> {
+        if !self.should_prefer_portal_pointer_backend() {
+            return Ok(None);
+        }
+        if let Some(session) = self.cached_portal_pointer_session() {
+            return Ok(Some(session));
+        }
+
+        let session = start_portal_pointer_session().await?;
+        if let Ok(mut cached) = self.portal_pointer_session.lock() {
+            *cached = Some(session.clone());
+        }
+        Ok(Some(session))
+    }
+
     async fn resolve_window_context(
         &self,
         params: &GetAppStateParams,
@@ -821,37 +991,6 @@ impl ComputerUseLinux {
         }
     }
 
-    fn cache_screenshot_size(&self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            self.clear_screenshot_size();
-            return;
-        }
-        if let Ok(mut cached) = self.last_screenshot_size.lock() {
-            *cached = Some(ScreenSize { width, height });
-        }
-    }
-
-    fn clear_screenshot_size(&self) {
-        if let Ok(mut cached) = self.last_screenshot_size.lock() {
-            *cached = None;
-        }
-    }
-
-    fn to_ydotool_absolute_point(&self, x: i32, y: i32) -> (i32, i32) {
-        let Some(size) = self
-            .last_screenshot_size
-            .lock()
-            .ok()
-            .and_then(|cached| *cached)
-        else {
-            return (x, y);
-        };
-        (
-            pixel_to_ydotool_absolute(x, size.width),
-            pixel_to_ydotool_absolute(y, size.height),
-        )
-    }
-
     fn resolve_target_point(
         &self,
         x: Option<i32>,
@@ -908,16 +1047,6 @@ fn not_implemented(
         message: message.to_string(),
         received,
     }
-}
-
-fn pixel_to_ydotool_absolute(value: i32, extent: u32) -> i32 {
-    if extent <= 1 {
-        return value;
-    }
-    let max_pixel = extent as i32 - 1;
-    let clamped = value.clamp(0, max_pixel) as i64;
-    let max_pixel = max_pixel as i64;
-    ((clamped * 65_535 + max_pixel / 2) / max_pixel) as i32
 }
 
 fn action_result(
@@ -1034,8 +1163,11 @@ fn wheel_mousemove_args(dx: i32, dy: i32) -> Vec<String> {
 
 fn run_ydotool_sequence(commands: &[Vec<String>]) -> std::result::Result<Vec<Output>, String> {
     let mut outputs = Vec::new();
-    for args in commands {
+    for (index, args) in commands.iter().enumerate() {
         outputs.push(run_ydotool(args)?);
+        if index + 1 < commands.len() {
+            thread::sleep(Duration::from_millis(35));
+        }
     }
     Ok(outputs)
 }
@@ -1405,26 +1537,17 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_pixels_normalize_to_ydotool_absolute_space() {
-        let backend = ComputerUseLinux::default();
-        backend.cache_screenshot_size(3840, 1080);
-
-        assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (26460, 56485));
-    }
-
-    #[test]
-    fn screenshot_size_cache_can_be_cleared() {
-        let backend = ComputerUseLinux::default();
-        backend.cache_screenshot_size(3840, 1080);
-
-        backend.clear_screenshot_size();
-
-        assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (1550, 930));
-
-        backend.cache_screenshot_size(3840, 1080);
-        backend.cache_screenshot_size(0, 1080);
-
-        assert_eq!(backend.to_ydotool_absolute_point(1550, 930), (1550, 930));
+    fn pointer_actions_keep_pixel_coordinates_for_ydotool_absolute_moves() {
+        assert_eq!(
+            absolute_mousemove_args(1550, 930),
+            vec![
+                "mousemove".to_string(),
+                "--absolute".to_string(),
+                "--".to_string(),
+                "1550".to_string(),
+                "930".to_string(),
+            ]
+        );
     }
 
     #[test]

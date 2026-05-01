@@ -25,7 +25,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
-| Linux Computer Use | ⚠️ opt-in / gated | Native Rust MCP backend (AT-SPI + `ydotool` + GNOME Shell or XDG Desktop Portal). **Also gated by OpenAI's per-account Statsig rollout** — the package can be installed but the feature only appears in the UI when OpenAI enables it for your account. Validated on Ubuntu/GNOME; KDE/wlroots not yet validated. |
+| Linux Computer Use | ⚠️ opt-in | Linux Computer Use backend with screen capture, accessibility, and input synthesis. The MCP server registers by default; the in-app UI surface is enabled at your discretion — see "Enabling Computer Use UI" below. Validated on Ubuntu/GNOME. |
 | Server-gated features (e.g. `gpt-5.5`) | 🟡 server-side | OpenAI rolls per-account, not project-controlled. Building a fresh package does not unlock these. |
 
 ## Quick install
@@ -108,9 +108,26 @@ The response is a structured report covering AT-SPI bus availability, GNOME Shel
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
 ```
 
-### Important caveat
+### Enabling Computer Use UI
 
-**Installing the package does not by itself enable Computer Use in the Codex UI.** The feature is also gated by an OpenAI per-account Statsig rollout (`computerUse` feature flag) on top of the platform gate this project unlocks. If your account is not yet in OpenAI's rollout cohort, the plugin is staged but invisible — the same pattern as the `gpt-5.5` model rollout. There is no project-side workaround that doesn't deliberately bypass OpenAI's gating.
+By default the MCP backend registers, but the Codex Desktop sidebar does not surface the Computer Use controls. If you want to use it through the in-app UI, opt in by setting one of:
+
+```bash
+# Ad-hoc, for a single build:
+CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 make build-app
+
+# Persistent (also picked up by the auto-updater on future rebuilds):
+mkdir -p ~/.config/codex-desktop
+echo '{"codex-linux-computer-use-ui-enabled": true}' > ~/.config/codex-desktop/settings.json
+```
+
+Either path enables the in-app controls on subsequent builds. Use of this option is at your own discretion; this is an unofficial Linux build and the upstream app may change at any time.
+
+To opt back out, unset the env var and remove or set the settings flag to `false`.
+
+The Linux Computer Use plugin and these UI surfaces are designed and maintained by [@avifenesh](https://github.com/avifenesh).
+
+### Side-by-side dev variant
 
 If you'd like to test the backend without affecting your default install, the side-by-side dev variant builds a separate app under a different ID and webview port:
 
