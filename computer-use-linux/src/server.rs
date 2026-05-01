@@ -2,7 +2,13 @@ use crate::atspi_tree::{
     list_accessible_apps, snapshot_tree, AccessibilityNode, AccessibleAppSummary,
 };
 use crate::diagnostics::{doctor_report, setup_accessibility_report, DoctorReport, SetupReport};
+use crate::gnome_extension::{setup_window_targeting_report, WindowTargetingSetupReport};
 use crate::screenshot::{capture_screenshot, ScreenshotCapture};
+use crate::windows::{
+    focus_window_target, focused_window, list_windows, resolve_window_target,
+    window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget,
+    GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
+};
 use anyhow::Result;
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
@@ -42,6 +48,14 @@ impl ComputerUseLinux {
     }
 
     #[tool(
+        name = "setup_window_targeting",
+        description = "Install and enable the optional GNOME Shell extension used for exact window list/focus targeting when GNOME blocks native introspection."
+    )]
+    async fn setup_window_targeting(&self) -> Json<WindowTargetingSetupReport> {
+        Json(setup_window_targeting_report().await)
+    }
+
+    #[tool(
         name = "list_apps",
         description = "List running Linux desktop app candidates visible to the Computer Use backend."
     )]
@@ -60,6 +74,83 @@ impl ComputerUseLinux {
     }
 
     #[tool(
+        name = "list_windows",
+        description = "List compositor windows with title, app id, class, focus state, client type, and known bounds."
+    )]
+    async fn list_windows(&self) -> Json<ListWindowsOutput> {
+        Json(window_list_output().await)
+    }
+
+    #[tool(
+        name = "focused_window",
+        description = "Return the compositor window that currently has keyboard focus."
+    )]
+    async fn focused_window(&self) -> Json<FocusedWindowOutput> {
+        match focused_window().await {
+            Ok(window) => {
+                let backend = window_backend(window.as_ref().into_iter());
+                Json(FocusedWindowOutput {
+                    backend,
+                    focused_window: window,
+                    error: None,
+                    permissions_hint: None,
+                    message:
+                        "Focused window query completed through the available GNOME window backend."
+                            .to_string(),
+                })
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                Json(FocusedWindowOutput {
+                    backend: GNOME_SHELL_INTROSPECT_BACKEND.to_string(),
+                    focused_window: None,
+                    permissions_hint: window_permission_hint(&error),
+                    error: Some(error),
+                    message: "Focused window query failed; targeted keyboard input is unavailable until window introspection works.".to_string(),
+                })
+            }
+        }
+    }
+
+    #[tool(
+        name = "activate_window",
+        description = "Focus a Linux desktop window by window_id, pid, app_id, wm_class, title, or terminal selectors when the compositor permits it."
+    )]
+    async fn activate_window(
+        &self,
+        Parameters(params): Parameters<ActivateWindowParams>,
+    ) -> Json<ActivateWindowOutput> {
+        let target = params.into_target();
+        let received = Some(serde_json::json!(target.clone()));
+        match focus_window_target(&target).await {
+            Ok(focus) => {
+                let ok = focus_satisfies_target(&focus, &target);
+                Json(ActivateWindowOutput {
+                    ok,
+                    implemented: true,
+                    backend: focus.backend.clone(),
+                    focus: Some(focus),
+                    error: None,
+                    permissions_hint: None,
+                    received,
+                })
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                Json(ActivateWindowOutput {
+                    ok: false,
+                    implemented: true,
+                    backend: GNOME_SHELL_INTROSPECT_BACKEND.to_string(),
+                    focus: None,
+                    permissions_hint: window_permission_hint(&error),
+                    error: Some(error),
+                    received,
+                })
+            }
+        }
+    }
+
+    #[tool(
         name = "get_app_state",
         description = "Start an app use session if needed, then get screenshot and accessibility state for a Linux app."
     )]
@@ -68,9 +159,29 @@ impl ComputerUseLinux {
         Parameters(params): Parameters<GetAppStateParams>,
     ) -> Json<GetAppStateOutput> {
         let diagnostics = doctor_report();
+        let (window_context, window_error, window_permissions_hint) =
+            self.resolve_window_context(&params).await;
         let max_nodes = params.max_nodes.unwrap_or(120).clamp(1, 500);
         let max_depth = params.max_depth.unwrap_or(12).min(12);
         let include_screenshot = params.include_screenshot.unwrap_or(true);
+        let app_filter = params
+            .app_name_or_bundle_identifier
+            .as_deref()
+            .or_else(|| {
+                window_context
+                    .as_ref()
+                    .and_then(|window| window.app_id.as_deref())
+            })
+            .or_else(|| {
+                window_context
+                    .as_ref()
+                    .and_then(|window| window.wm_class.as_deref())
+            })
+            .or_else(|| {
+                window_context
+                    .as_ref()
+                    .and_then(|window| window.title.as_deref())
+            });
         let (screenshot, screenshot_error) = if include_screenshot {
             match capture_screenshot().await {
                 Ok(capture) => {
@@ -88,13 +199,7 @@ impl ComputerUseLinux {
         };
         let (accessibility_tree, accessibility_error) =
             if diagnostics.readiness.can_build_accessibility_tree {
-                match snapshot_tree(
-                    params.app_name_or_bundle_identifier.as_deref(),
-                    max_nodes,
-                    max_depth,
-                )
-                .await
-                {
+                match snapshot_tree(app_filter, max_nodes, max_depth).await {
                     Ok(nodes) => (nodes, None),
                     Err(error) => (Vec::new(), Some(error.to_string())),
                 }
@@ -108,7 +213,7 @@ impl ComputerUseLinux {
                 )
             };
         self.cache_nodes(&accessibility_tree);
-        let message = if let Some(error) = &accessibility_error {
+        let mut message = if let Some(error) = &accessibility_error {
             format!("MCP registration is working, but AT-SPI tree extraction failed: {error}")
         } else if let Some(capture) = &screenshot {
             format!(
@@ -127,9 +232,20 @@ impl ComputerUseLinux {
                 accessibility_tree.len()
             )
         };
+        if let Some(window) = &window_context {
+            message.push_str(&format!(
+                " Window target resolved to window_id {}.",
+                window.window_id
+            ));
+        } else if let Some(error) = &window_error {
+            message.push_str(&format!(" Window target resolution failed: {error}"));
+        }
 
         Json(GetAppStateOutput {
             app_name_or_bundle_identifier: params.app_name_or_bundle_identifier,
+            window_context,
+            window_error,
+            window_permissions_hint,
             backend: "linux-atspi".to_string(),
             screenshot,
             screenshot_error,
@@ -265,10 +381,25 @@ impl ComputerUseLinux {
 
     #[tool(
         name = "press_key",
-        description = "Press a key or key-combination on the keyboard, including modifier and navigation keys."
+        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector."
     )]
-    fn press_key(&self, Parameters(params): Parameters<PressKeyParams>) -> Json<ActionOutput> {
-        let received = Some(serde_json::json!(params));
+    async fn press_key(
+        &self,
+        Parameters(params): Parameters<PressKeyParams>,
+    ) -> Json<ActionOutput> {
+        let received = Some(serde_json::json!(params.clone()));
+        let focus = match self.focus_target_for_input(&params.window_target()).await {
+            Ok(focus) => focus,
+            Err(message) => {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "press_key".to_string(),
+                    message,
+                    received,
+                });
+            }
+        };
         let Some(key_events) = key_sequence(&params.key) else {
             return Json(ActionOutput {
                 ok: false,
@@ -281,25 +412,50 @@ impl ComputerUseLinux {
         let mut args = vec!["key".to_string()];
         args.extend(key_events);
         let result = run_ydotool(&args).map(|output| vec![output]);
-        Json(action_result("press_key", result, received))
+        Json(action_result_with_focus(
+            "press_key",
+            result,
+            received,
+            focus,
+        ))
     }
 
     #[tool(
         name = "type_text",
-        description = "Type literal text using keyboard input."
+        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector."
     )]
-    fn type_text(&self, Parameters(params): Parameters<TypeTextParams>) -> Json<ActionOutput> {
-        let received = Some(serde_json::json!(params));
+    async fn type_text(
+        &self,
+        Parameters(params): Parameters<TypeTextParams>,
+    ) -> Json<ActionOutput> {
+        let received = Some(serde_json::json!(params.clone()));
+        let focus = match self.focus_target_for_input(&params.window_target()).await {
+            Ok(focus) => focus,
+            Err(message) => {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "type_text".to_string(),
+                    message,
+                    received,
+                });
+            }
+        };
         let result = run_ydotool(&["type".to_string(), "--".to_string(), params.text])
             .map(|output| vec![output]);
-        Json(action_result("type_text", result, received))
+        Json(action_result_with_focus(
+            "type_text",
+            result,
+            received,
+            focus,
+        ))
     }
 }
 
 #[tool_handler(
     name = "codex-computer-use-linux",
     version = "0.1.0",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees, and send coordinate, element-index click/scroll, key, text, and drag input through ydotool when ydotoold is available. Native AT-SPI actions are still in progress."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees, list/focus GNOME Shell windows when org.gnome.Shell.Introspect or the Codex GNOME Shell extension permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate, element-index click/scroll, key, text, and drag input through ydotool when ydotoold is available. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -321,6 +477,73 @@ struct ListAppsOutput {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ListWindowsOutput {
+    backend: String,
+    windows: Vec<WindowInfo>,
+    error: Option<String>,
+    permissions_hint: Option<String>,
+    note: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct FocusedWindowOutput {
+    backend: String,
+    focused_window: Option<WindowInfo>,
+    error: Option<String>,
+    permissions_hint: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+struct ActivateWindowParams {
+    #[serde(default)]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    tty: Option<String>,
+    #[serde(default)]
+    terminal_pid: Option<u32>,
+    #[serde(default)]
+    terminal_command: Option<String>,
+    #[serde(default)]
+    terminal_cwd: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+impl ActivateWindowParams {
+    fn into_target(self) -> WindowTarget {
+        WindowTarget {
+            window_id: self.window_id,
+            pid: self.pid,
+            tty: self.tty,
+            terminal_pid: self.terminal_pid,
+            terminal_command: self.terminal_command,
+            terminal_cwd: self.terminal_cwd,
+            app_id: self.app_id,
+            wm_class: self.wm_class,
+            title: self.title,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ActivateWindowOutput {
+    ok: bool,
+    implemented: bool,
+    backend: String,
+    focus: Option<WindowFocusResult>,
+    error: Option<String>,
+    permissions_hint: Option<String>,
+    received: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 struct AppCandidate {
     name: String,
     pid: u32,
@@ -332,6 +555,24 @@ struct GetAppStateParams {
     #[serde(default)]
     app_name_or_bundle_identifier: Option<String>,
     #[serde(default)]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    tty: Option<String>,
+    #[serde(default)]
+    terminal_pid: Option<u32>,
+    #[serde(default)]
+    terminal_command: Option<String>,
+    #[serde(default)]
+    terminal_cwd: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
     max_nodes: Option<usize>,
     #[serde(default)]
     max_depth: Option<u32>,
@@ -339,9 +580,28 @@ struct GetAppStateParams {
     include_screenshot: Option<bool>,
 }
 
+impl GetAppStateParams {
+    fn window_target(&self) -> WindowTarget {
+        WindowTarget {
+            window_id: self.window_id,
+            pid: self.pid,
+            tty: self.tty.clone(),
+            terminal_pid: self.terminal_pid,
+            terminal_command: self.terminal_command.clone(),
+            terminal_cwd: self.terminal_cwd.clone(),
+            app_id: self.app_id.clone(),
+            wm_class: self.wm_class.clone(),
+            title: self.title.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct GetAppStateOutput {
     app_name_or_bundle_identifier: Option<String>,
+    window_context: Option<WindowInfo>,
+    window_error: Option<String>,
+    window_permissions_hint: Option<String>,
     backend: String,
     screenshot: Option<ScreenshotCapture>,
     screenshot_error: Option<String>,
@@ -408,11 +668,79 @@ struct DragParams {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 struct PressKeyParams {
     key: String,
+    #[serde(default)]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    tty: Option<String>,
+    #[serde(default)]
+    terminal_pid: Option<u32>,
+    #[serde(default)]
+    terminal_command: Option<String>,
+    #[serde(default)]
+    terminal_cwd: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 struct TypeTextParams {
     text: String,
+    #[serde(default)]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    tty: Option<String>,
+    #[serde(default)]
+    terminal_pid: Option<u32>,
+    #[serde(default)]
+    terminal_command: Option<String>,
+    #[serde(default)]
+    terminal_cwd: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+impl PressKeyParams {
+    fn window_target(&self) -> WindowTarget {
+        WindowTarget {
+            window_id: self.window_id,
+            pid: self.pid,
+            tty: self.tty.clone(),
+            terminal_pid: self.terminal_pid,
+            terminal_command: self.terminal_command.clone(),
+            terminal_cwd: self.terminal_cwd.clone(),
+            app_id: self.app_id.clone(),
+            wm_class: self.wm_class.clone(),
+            title: self.title.clone(),
+        }
+    }
+}
+
+impl TypeTextParams {
+    fn window_target(&self) -> WindowTarget {
+        WindowTarget {
+            window_id: self.window_id,
+            pid: self.pid,
+            tty: self.tty.clone(),
+            terminal_pid: self.terminal_pid,
+            terminal_command: self.terminal_command.clone(),
+            terminal_cwd: self.terminal_cwd.clone(),
+            app_id: self.app_id.clone(),
+            wm_class: self.wm_class.clone(),
+            title: self.title.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,21 +758,62 @@ struct ActionOutput {
     received: Option<serde_json::Value>,
 }
 
-fn not_implemented(
-    action: &str,
-    received: Option<serde_json::Value>,
-    message: &str,
-) -> ActionOutput {
-    ActionOutput {
-        ok: false,
-        implemented: false,
-        action: action.to_string(),
-        message: message.to_string(),
-        received,
-    }
-}
-
 impl ComputerUseLinux {
+    async fn resolve_window_context(
+        &self,
+        params: &GetAppStateParams,
+    ) -> (Option<WindowInfo>, Option<String>, Option<String>) {
+        let target = params.window_target();
+        if !target.has_target() {
+            return (None, None, None);
+        }
+
+        match list_windows().await {
+            Ok(windows) => match resolve_window_target(&windows, &target) {
+                Ok(window) => (Some(window.clone()), None, None),
+                Err(error) => (None, Some(format!("{error:#}")), None),
+            },
+            Err(error) => {
+                let error = format!("{error:#}");
+                let hint = window_permission_hint(&error);
+                (None, Some(error), hint)
+            }
+        }
+    }
+
+    async fn focus_target_for_input(
+        &self,
+        target: &WindowTarget,
+    ) -> std::result::Result<Option<WindowFocusResult>, String> {
+        if !target.has_target() {
+            return Ok(None);
+        }
+
+        let focus = focus_window_target(target).await.map_err(|error| {
+            let error = format!("{error:#}");
+            if let Some(hint) = window_permission_hint(&error) {
+                format!("Did not send input because the target window could not be focused: {error}. {hint}")
+            } else {
+                format!("Did not send input because the target window could not be focused: {error}")
+            }
+        })?;
+
+        if focus_satisfies_target(&focus, target) {
+            Ok(Some(focus))
+        } else {
+            let required = if target.requires_exact_focus() {
+                "exact target-window focus"
+            } else {
+                "app-level focus"
+            };
+            Err(format!(
+                "Did not send input because {required} verification failed after activating the target window. Focus result: requested window_id {}, focused window_id {:?}.",
+                focus.requested_window.window_id,
+                focus.focused_window.as_ref().map(|window| window.window_id)
+            ))
+        }
+    }
+
     fn cache_nodes(&self, nodes: &[AccessibilityNode]) {
         if let Ok(mut cached) = self.last_nodes.lock() {
             cached.clear();
@@ -527,6 +896,20 @@ impl ComputerUseLinux {
     }
 }
 
+fn not_implemented(
+    action: &str,
+    received: Option<serde_json::Value>,
+    message: &str,
+) -> ActionOutput {
+    ActionOutput {
+        ok: false,
+        implemented: false,
+        action: action.to_string(),
+        message: message.to_string(),
+        received,
+    }
+}
+
 fn pixel_to_ydotool_absolute(value: i32, extent: u32) -> i32 {
     if extent <= 1 {
         return value;
@@ -558,6 +941,75 @@ fn action_result(
             received,
         },
     }
+}
+
+fn action_result_with_focus(
+    action: &str,
+    result: std::result::Result<Vec<Output>, String>,
+    received: Option<serde_json::Value>,
+    focus: Option<WindowFocusResult>,
+) -> ActionOutput {
+    let mut output = action_result(action, result, received);
+    if output.ok {
+        if let Some(focus) = focus {
+            let verification = if focus.exact_window_focused {
+                "exact window-focus"
+            } else {
+                "app-level focus"
+            };
+            output.message = format!(
+                "{} Target window_id {} was focused with {verification} verification before input.",
+                output.message, focus.requested_window.window_id,
+            );
+        }
+    }
+    output
+}
+
+fn focus_satisfies_target(focus: &WindowFocusResult, target: &WindowTarget) -> bool {
+    if target.requires_exact_focus() {
+        focus.exact_window_focused
+    } else {
+        focus.exact_window_focused || focus.app_focused
+    }
+}
+
+async fn window_list_output() -> ListWindowsOutput {
+    match list_windows().await {
+        Ok(windows) => {
+            let backend = window_backend(windows.iter());
+            let note = if backend == GNOME_SHELL_EXTENSION_BACKEND {
+                "Window list came from the Codex GNOME Shell extension. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
+            } else {
+                "Window list came from GNOME Shell Introspect. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
+            };
+            ListWindowsOutput {
+                backend,
+                windows,
+                error: None,
+                permissions_hint: None,
+                note: note.to_string(),
+            }
+        }
+        Err(error) => {
+            let error = format!("{error:#}");
+            ListWindowsOutput {
+                backend: GNOME_SHELL_INTROSPECT_BACKEND.to_string(),
+                windows: Vec::new(),
+                permissions_hint: window_permission_hint(&error),
+                error: Some(error),
+                note: "Window listing failed, so targeted keyboard input cannot safely focus or verify a target window."
+                    .to_string(),
+            }
+        }
+    }
+}
+
+fn window_backend<'a>(windows: impl Iterator<Item = &'a WindowInfo>) -> String {
+    windows
+        .map(|window| window.backend.clone())
+        .next()
+        .unwrap_or_else(|| GNOME_SHELL_INTROSPECT_BACKEND.to_string())
 }
 
 fn absolute_mousemove_args(x: i32, y: i32) -> Vec<String> {

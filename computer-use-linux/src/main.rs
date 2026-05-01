@@ -1,7 +1,10 @@
 mod atspi_tree;
 mod diagnostics;
+mod gnome_extension;
 mod screenshot;
 mod server;
+mod terminal;
+mod windows;
 
 use anyhow::{Context, Result};
 
@@ -63,13 +66,49 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Some("windows") => {
+            let report = match windows::list_windows().await {
+                Ok(windows) => {
+                    let backend = windows
+                        .first()
+                        .map(|window| window.backend.as_str())
+                        .unwrap_or(windows::GNOME_SHELL_INTROSPECT_BACKEND);
+                    serde_json::json!({
+                        "backend": backend,
+                        "windows": windows,
+                        "error": null,
+                        "permissions_hint": null,
+                    })
+                }
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    serde_json::json!({
+                        "backend": windows::GNOME_SHELL_INTROSPECT_BACKEND,
+                        "windows": [],
+                        "error": error,
+                        "permissions_hint": windows::window_permission_hint(&error),
+                    })
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("setup-window-targeting") => {
+            let report = gnome_extension::setup_window_targeting_report().await;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .context("failed to serialize window targeting setup report")?
+            );
+            Ok(())
+        }
         Some("--help") | Some("-h") => {
             print_help();
             Ok(())
         }
         Some(command) => {
             anyhow::bail!(
-                "unknown command '{command}'. Expected one of: mcp, doctor, setup, apps, state, screenshot"
+                "unknown command '{command}'. Expected one of: mcp, doctor, setup, apps, state, screenshot, windows, setup-window-targeting"
             );
         }
         None => {
@@ -81,6 +120,6 @@ async fn main() -> Result<()> {
 
 fn print_help() {
     println!(
-        "codex-computer-use-linux\n\nUsage:\n  codex-computer-use-linux mcp\n  codex-computer-use-linux doctor\n  codex-computer-use-linux setup\n  codex-computer-use-linux apps\n  codex-computer-use-linux state [APP_NAME]\n  codex-computer-use-linux screenshot"
+        "codex-computer-use-linux\n\nUsage:\n  codex-computer-use-linux mcp\n  codex-computer-use-linux doctor\n  codex-computer-use-linux setup\n  codex-computer-use-linux setup-window-targeting\n  codex-computer-use-linux apps\n  codex-computer-use-linux state [APP_NAME]\n  codex-computer-use-linux screenshot\n  codex-computer-use-linux windows"
     );
 }
