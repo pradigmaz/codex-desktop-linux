@@ -743,6 +743,28 @@ function findDynamicTrayStartupCall(source, setupFn, startIndex) {
   return startupRegex.exec(source);
 }
 
+function applyLinuxQuitGuardPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const quitGuardNeedle = "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);";
+  const quitGuardPatch =
+    "let n=require(`electron`),i=require(`node:path`),o=require(`node:fs`);let codexLinuxQuitInProgress=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;";
+
+  if (patchedSource.includes("codexLinuxQuitInProgress=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0;")) {
+    return patchedSource;
+  }
+
+  if (patchedSource.includes(quitGuardNeedle)) {
+    return patchedSource.replace(quitGuardNeedle, quitGuardPatch);
+  }
+
+  if (patchedSource.includes("require(`electron`)") && patchedSource.includes("require(`node:path`)")) {
+    console.warn("WARN: Could not find Linux quit guard insertion point — skipping explicit quit-state patch");
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
 
@@ -778,12 +800,16 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
 
   const closeToTrayNeedle =
     "if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}";
-  const closeToTrayPatch =
+  const closeToTrayExistingPatch =
     "if((process.platform===`win32`||process.platform===`linux`)&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}";
+  const closeToTrayPatch =
+    "if((process.platform===`win32`||process.platform===`linux`)&&f===`local`&&!this.isAppQuitting&&!codexLinuxIsQuitInProgress()&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}";
   const patchedCloseToTrayRegex =
     /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&[A-Za-z_$][\w$]*===`local`&&!this\.isAppQuitting&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
   if (patchedSource.includes(closeToTrayPatch)) {
     // Already patched.
+  } else if (patchedSource.includes(closeToTrayExistingPatch)) {
+    patchedSource = patchedSource.replace(closeToTrayExistingPatch, closeToTrayPatch);
   } else if (patchedSource.includes(closeToTrayNeedle)) {
     patchedSource = patchedSource.replace(closeToTrayNeedle, closeToTrayPatch);
   } else if (patchedCloseToTrayRegex.test(patchedSource)) {
@@ -837,10 +863,14 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
 
   const trayMenuBuildNeedle =
     "openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());";
-  const trayMenuBuildPatch =
+  const trayMenuBuildExistingPatch =
     "openNativeTrayMenu(){this.updateChronicleTrayIcon();let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());";
-  if (patchedSource.includes("let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?")) {
+  const trayMenuBuildPatch =
+    "openNativeTrayMenu(){if(process.platform===`linux`&&codexLinuxIsQuitInProgress())return;this.updateChronicleTrayIcon();let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate(this.getNativeTrayMenuItems());";
+  if (patchedSource.includes("openNativeTrayMenu(){if(process.platform===`linux`&&codexLinuxIsQuitInProgress())return;")) {
     // Already patched.
+  } else if (patchedSource.includes(trayMenuBuildExistingPatch)) {
+    patchedSource = patchedSource.replace(trayMenuBuildExistingPatch, trayMenuBuildPatch);
   } else if (patchedSource.includes(trayMenuBuildNeedle)) {
     patchedSource = patchedSource.replace(trayMenuBuildNeedle, trayMenuBuildPatch);
   } else {
@@ -869,10 +899,14 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
 
   const trayMenuThreadsNeedle =
     "case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads;return";
-  const trayMenuThreadsPatch =
+  const trayMenuThreadsExistingPatch =
     "case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&this.setLinuxTrayContextMenu?.();return";
-  if (patchedSource.includes("this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&this.setLinuxTrayContextMenu?.()")) {
+  const trayMenuThreadsPatch =
+    "case`tray-menu-threads-changed`:this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&!codexLinuxIsQuitInProgress()&&this.setLinuxTrayContextMenu?.();return";
+  if (patchedSource.includes("this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&!codexLinuxIsQuitInProgress()&&this.setLinuxTrayContextMenu?.()")) {
     // Already patched.
+  } else if (patchedSource.includes(trayMenuThreadsExistingPatch)) {
+    patchedSource = patchedSource.replace(trayMenuThreadsExistingPatch, trayMenuThreadsPatch);
   } else if (patchedSource.includes(trayMenuThreadsNeedle)) {
     patchedSource = patchedSource.replace(trayMenuThreadsNeedle, trayMenuThreadsPatch);
   } else {
@@ -928,10 +962,17 @@ function applyLinuxSingleInstancePatch(currentSource) {
 
   const secondInstanceHandlerNeedle =
     "l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
-  const secondInstanceHandlerPatch =
+  const secondInstanceHandlerExistingPatch =
     "let codexLinuxSecondInstanceHandler=(e,t)=>{R.deepLinks.queueProcessArgs(t)||ie()};process.platform===`linux`&&(n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
-  if (patchedSource.includes("codexLinuxSecondInstanceHandler")) {
+  const secondInstanceHandlerPatch =
+    "let codexLinuxSecondInstanceHandler=(e,t)=>{codexLinuxIsQuitInProgress()?void 0:R.deepLinks.queueProcessArgs(t)||ie()},codexLinuxBeforeQuitHandler=()=>{codexLinuxMarkQuitInProgress()};process.platform===`linux`&&(n.app.on(`before-quit`,codexLinuxBeforeQuitHandler),k.add(()=>{n.app.off(`before-quit`,codexLinuxBeforeQuitHandler)}),n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=";
+  if (
+    patchedSource.includes("codexLinuxBeforeQuitHandler=()=>{codexLinuxMarkQuitInProgress()}") &&
+    patchedSource.includes("codexLinuxIsQuitInProgress()?void 0:R.deepLinks.queueProcessArgs(t)||ie()")
+  ) {
     // Already patched.
+  } else if (patchedSource.includes(secondInstanceHandlerExistingPatch)) {
+    patchedSource = patchedSource.replace(secondInstanceHandlerExistingPatch, secondInstanceHandlerPatch);
   } else if (patchedSource.includes(secondInstanceHandlerNeedle)) {
     patchedSource = patchedSource.replace(secondInstanceHandlerNeedle, secondInstanceHandlerPatch);
   } else if (patchedSource.includes("setSecondInstanceArgsHandler")) {
@@ -1283,7 +1324,7 @@ function applyLinuxLaunchActionArgsPatch(currentSource) {
   const hotkeyWindowLaunchActionPatch = socketHotkeyWindowLaunchActionPatch
     .replace(
       "let ae=async(e,t)=>{",
-      `let codexLinuxGetSetting=e=>process.platform!==\`linux\`||M.globalState.get(e)!==!1,codexLinuxIsTrayEnabled=()=>codexLinuxGetSetting(\`${linuxSettingsKeys.systemTray}\`),codexLinuxIsWarmStartEnabled=()=>codexLinuxGetSetting(\`${linuxSettingsKeys.warmStart}\`),codexLinuxIsPromptWindowEnabled=()=>codexLinuxGetSetting(\`${linuxSettingsKeys.promptWindow}\`),ae=async(e,t)=>{`,
+      `let codexLinuxQuitInProgress=!1,codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0},codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0,codexLinuxGetSetting=e=>process.platform!==\`linux\`||M.globalState.get(e)!==!1,codexLinuxIsTrayEnabled=()=>codexLinuxGetSetting(\`${linuxSettingsKeys.systemTray}\`),codexLinuxIsWarmStartEnabled=()=>codexLinuxGetSetting(\`${linuxSettingsKeys.warmStart}\`),codexLinuxIsPromptWindowEnabled=()=>codexLinuxGetSetting(\`${linuxSettingsKeys.promptWindow}\`),ae=async(e,t)=>{`,
     )
     .replace(
       "codexLinuxShowHotkeyWindow=async()=>{let e=P.hotkeyWindowLifecycleManager;typeof e.openHome===`function`?await e.openHome():typeof e.show===`function`?await e.show():await P.ensureHostWindow(z)}",
@@ -1292,6 +1333,14 @@ function applyLinuxLaunchActionArgsPatch(currentSource) {
     .replace(
       "Array.isArray(e)&&(e.includes(`--prompt-chat`)||e.includes(`--hotkey-window`))?(await codexLinuxShowHotkeyWindow(),!0)",
       "Array.isArray(e)&&(e.includes(`--prompt-chat`)||e.includes(`--hotkey-window`))?(codexLinuxIsPromptWindowEnabled()?(await codexLinuxShowHotkeyWindow(),!0):!1)",
+    )
+    .replace(
+      "codexLinuxHandleLaunchActionArgs=async e=>",
+      "codexLinuxHandleLaunchActionArgs=async e=>codexLinuxIsQuitInProgress()?!0:",
+    )
+    .replace(
+      "codexLinuxHandleLaunchActionArgsFallback=(e,t)=>{",
+      "codexLinuxHandleLaunchActionArgsFallback=(e,t)=>{if(codexLinuxIsQuitInProgress())return;",
     )
     .replace(
       "if(process.platform!==`linux`||!e)return;",
@@ -1304,6 +1353,10 @@ function applyLinuxLaunchActionArgsPatch(currentSource) {
     .replace(
       "codexLinuxPrewarmHotkeyWindow=()=>{try{",
       "codexLinuxPrewarmHotkeyWindow=()=>{if(!codexLinuxIsPromptWindowEnabled())return;try{",
+    )
+    .replace(
+      "process.platform===`linux`&&(codexLinuxStartLaunchActionSocket(),n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{codexLinuxHandleLaunchActionArgsFallback(e,()=>{ie()})});",
+      "let codexLinuxBeforeQuitHandler=()=>{codexLinuxMarkQuitInProgress()};process.platform===`linux`&&(n.app.on(`before-quit`,codexLinuxBeforeQuitHandler),k.add(()=>{n.app.off(`before-quit`,codexLinuxBeforeQuitHandler)}),codexLinuxStartLaunchActionSocket(),n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{codexLinuxHandleLaunchActionArgsFallback(e,()=>{ie()})});",
     );
   const showBasedHotkeyWindowLaunchActionPatch =
     "let ae=async(e,t)=>{P.hotkeyWindowLifecycleManager.hide();let n=P.getPrimaryWindow(z),r=n??await P.createFreshLocalWindow(e);r!=null&&(n!=null&&t.navigateExistingWindow&&R.navigateToRoute(r,e),re(r))},codexLinuxShowHotkeyWindow=async()=>{P.hotkeyWindowLifecycleManager.show()||await P.ensureHostWindow(z)},codexLinuxOpenQuickChat=async()=>{P.hotkeyWindowLifecycleManager.hide();let e=P.getPrimaryWindow(z),t=e??await P.createFreshLocalWindow(`/`);t!=null&&(P.windowManager.sendMessageToWindow(t,{type:`new-quick-chat`}),re(t))},codexLinuxHasDeepLink=e=>Array.isArray(e)&&e.some(e=>typeof e===`string`&&(e.startsWith(`codex://`)||e.startsWith(`codex-browser-sidebar://`))),codexLinuxHandleLaunchActionArgs=async e=>codexLinuxHasDeepLink(e)&&R.deepLinks.queueProcessArgs(e)?!0:Array.isArray(e)&&(e.includes(`--prompt-chat`)||e.includes(`--hotkey-window`))?(await codexLinuxShowHotkeyWindow(),!0):Array.isArray(e)&&e.includes(`--quick-chat`)?(await codexLinuxOpenQuickChat(),!0):Array.isArray(e)&&e.includes(`--new-chat`)?(await ae(`/`,{navigateExistingWindow:!0}),!0):!1,codexLinuxHandleLaunchActionArgsFallback=(e,t)=>{codexLinuxHandleLaunchActionArgs(e).then(e=>{e||t()}).catch(e=>{g.reportNonFatal(e instanceof Error?e:`Failed to handle Linux launch action`,{kind:`linux-launch-action-failed`}),t()})},codexLinuxSecondInstanceHandler=(e,t)=>{codexLinuxHandleLaunchActionArgsFallback(t,()=>{ie()})};process.platform===`linux`&&(n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{codexLinuxHandleLaunchActionArgsFallback(e,()=>{ie()})});let oe=async()=>{";
@@ -1313,10 +1366,14 @@ function applyLinuxLaunchActionArgsPatch(currentSource) {
     hotkeyWindowLaunchActionPatch;
 
   if (
+    patchedSource.includes("codexLinuxQuitInProgress=!1") &&
+    patchedSource.includes("codexLinuxMarkQuitInProgress=()=>{codexLinuxQuitInProgress=!0}") &&
+    patchedSource.includes("codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0") &&
     patchedSource.includes("codexLinuxGetSetting=e=>") &&
     patchedSource.includes("codexLinuxGetHotkeyWindowController=()=>") &&
     patchedSource.includes("codexLinuxPrewarmHotkeyWindow=()=>") &&
     patchedSource.includes("codexLinuxStartLaunchActionSocket=()=>") &&
+    patchedSource.includes("n.app.on(`before-quit`,codexLinuxBeforeQuitHandler)") &&
     !patchedSource.includes("codexLinuxOpenNewChat")
   ) {
     return patchedSource;
@@ -1421,6 +1478,7 @@ function patchMainBundleSource(source, iconAsset) {
   let patched = source;
   const iconPathExpression =
     iconAsset == null ? null : `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
+  patched = applyLinuxQuitGuardPatch(patched);
   patched = applyLinuxWindowOptionsPatch(patched, iconAsset);
   patched = applyLinuxMenuPatch(patched);
   patched = applyLinuxSetIconPatch(patched, iconAsset);
@@ -1574,6 +1632,7 @@ module.exports = {
   applyKeybindsSettingsSharedPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxFileManagerPatch,
+  applyLinuxQuitGuardPatch,
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,

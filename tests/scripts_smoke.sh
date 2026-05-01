@@ -628,15 +628,75 @@ JS
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform!==`win32`&&process.platform!==`darwin`&&process.platform!==`linux`?null:'
     assert_contains "$extracted/.vite/build/main-test.js" 'nativeImage.createFromPath(process.resourcesPath+`/../content/webview/assets/app-test.png`)'
     assert_contains "$extracted/.vite/build/main-test.js" '(process.platform===`win32`||process.platform===`linux`)&&f===`local`'
+    assert_contains "$extracted/.vite/build/main-test.js" '!this.isAppQuitting&&!codexLinuxIsQuitInProgress()'
     assert_contains "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){let e=n.Menu.buildFromTemplate(this.getNativeTrayMenuItems())'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`'
     assert_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()'
+    assert_contains "$extracted/.vite/build/main-test.js" 'openNativeTrayMenu(){if(process.platform===`linux`&&codexLinuxIsQuitInProgress())return;'
     assert_contains "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`'
-    assert_contains "$extracted/.vite/build/main-test.js" 'this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&this.setLinuxTrayContextMenu?.()'
+    assert_contains "$extracted/.vite/build/main-test.js" 'this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&!codexLinuxIsQuitInProgress()&&this.setLinuxTrayContextMenu?.()'
     assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`&&codexLinuxIsTrayEnabled())&&oe();'
     assert_not_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.tray.setContextMenu?.(e),this.tray.popUpContextMenu(e)'
     assert_not_contains "$output_log" 'WARN: Could not find tray'
+
+    node - "$extracted/.vite/build/main-test.js" <<'NODE'
+const fs = require("fs");
+
+const source = fs.readFileSync(process.argv[2], "utf8");
+const closeSnippet = source.match(/v&&k\.on\(`close`,e=>\{.*?\}\);/)?.[0];
+if (!closeSnippet) {
+  throw new Error("Could not extract patched Linux close handler");
+}
+
+function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, trayEnabled = true } = {}) {
+  const state = { hideCalls: 0 };
+  const controller = {
+    isAppQuitting,
+    options: { canHideLastLocalWindowToTray: () => trayEnabled },
+    persistPrimaryWindowBounds() {},
+    getPrimaryWindows() {
+      return [];
+    },
+  };
+  const factory = new Function(
+    "process",
+    "codexLinuxIsQuitInProgress",
+    "state",
+    `return function(){const v=true;const f=\`local\`;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${closeSnippet};return k.handlers.close;};`,
+  );
+  const makeHandler = factory({ platform: "linux" }, () => quitInProgress, state);
+  const handler = makeHandler.call(controller);
+  return { handler, state };
+}
+
+function runClose(options) {
+  const event = {
+    prevented: false,
+    preventDefault() {
+      this.prevented = true;
+    },
+  };
+  const { handler, state } = registerCloseHandler(options);
+  handler(event);
+  return { event, state };
+}
+
+let result = runClose({ trayEnabled: true, quitInProgress: false, isAppQuitting: false });
+if (!result.event.prevented || result.state.hideCalls !== 1) {
+  throw new Error("normal Linux close should still hide to tray");
+}
+
+result = runClose({ trayEnabled: true, quitInProgress: true, isAppQuitting: false });
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("quit-in-progress Linux close should not hide to tray");
+}
+
+result = runClose({ trayEnabled: true, quitInProgress: false, isAppQuitting: true });
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("app.quit close should not hide to tray when upstream quit flag is already set");
+}
+NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform!==`linux`' '1'
@@ -645,9 +705,11 @@ JS
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'setLinuxTrayContextMenu(){' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.setLinuxTrayContextMenu(),this.tray.on(`click`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`?this.openNativeTrayMenu():this.onTrayButtonClick()' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxIsQuitInProgress()' '3'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'openNativeTrayMenu(){if(process.platform===`linux`&&codexLinuxIsQuitInProgress())return;' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.setLinuxTrayContextMenu?.()' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&!codexLinuxIsQuitInProgress()&&this.setLinuxTrayContextMenu?.()' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&codexLinuxIsTrayEnabled())&&oe' '1'
 }
 
@@ -1071,6 +1133,7 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
 
 (async () => {
   await boot();
+  assert(typeof state.appHandlers["before-quit"] === "function", "before-quit handler was not registered");
   assert(typeof state.appHandlers["second-instance"] === "function", "second-instance handler was not registered");
   assert(typeof state.initialHandler === "function", "initial argv handler was not registered");
   assert(state.createServerCalls === 1, "warm-start launch action socket server was not created");
@@ -1234,6 +1297,29 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
   assert(state.createFreshLocalWindowCalls.length === 1 && state.createFreshLocalWindowCalls[0] === "/", "initial argv handler should create a window when no primary exists");
   assert(state.messages.length === 1 && state.messages[0].windowId === "created" && state.messages[0].message.type === "new-quick-chat", "initial argv handler should open quick chat in the created window when no primary exists");
 
+  resetCalls();
+  state.primaryWindow = state.primary;
+  state.appHandlers["before-quit"]();
+  await runSecondInstance(["codex-desktop", "--quick-chat"]);
+  assert(state.messages.length === 0, "quit-in-progress second-instance args should not reopen quick chat");
+  assert(state.focusCalls.length === 0, "quit-in-progress second-instance args should not focus a window");
+  assert(state.ieCalls === 0, "quit-in-progress second-instance args should not hit the focus fallback");
+
+  resetCalls();
+  state.primaryWindow = state.primary;
+  let socketAfterQuit = await runSocketArgs(["codex-desktop", "--prompt-chat"]);
+  assert(socketAfterQuit.outputs[0] === "ok\n", "quit-in-progress warm-start socket should still acknowledge handled args");
+  assert(state.openHomeCalls === 0, "quit-in-progress warm-start socket should not open the prompt");
+  assert(state.focusCalls.length === 0, "quit-in-progress warm-start socket should not focus the main window");
+  assert(state.ieCalls === 0, "quit-in-progress warm-start socket should not fall back to focus");
+
+  resetCalls();
+  state.primaryWindow = state.primary;
+  await runInitialArgs(["codex-desktop", "--new-chat"]);
+  assert(state.createFreshLocalWindowCalls.length === 0, "quit-in-progress initial args should not open a new window");
+  assert(state.navigateCalls.length === 0, "quit-in-progress initial args should not navigate an existing window");
+  assert(state.focusCalls.length === 0, "quit-in-progress initial args should not focus the main window");
+
   await boot({ promptChatEnabled: false });
   resetCalls();
   state.primaryWindow = state.primary;
@@ -1273,8 +1359,14 @@ NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_occurrence_count "$extracted/.vite/build/main-test.js" '!n.app.requestSingleInstanceLock()' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let codexLinuxBeforeQuitHandler=()=>{codexLinuxMarkQuitInProgress()}' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'n.app.on(`before-quit`,codexLinuxBeforeQuitHandler)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxSecondInstanceHandler' '3'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxQuitInProgress=!1' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxIsQuitInProgress=()=>codexLinuxQuitInProgress===!0' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxHandleLaunchActionArgs=' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxHandleLaunchActionArgs=async e=>codexLinuxIsQuitInProgress()?!0:' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'codexLinuxHandleLaunchActionArgsFallback=(e,t)=>{if(codexLinuxIsQuitInProgress())return;' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'e.includes(`--new-chat`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'e.includes(`--quick-chat`)' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'e.includes(`--prompt-chat`)' '1'
@@ -1313,7 +1405,7 @@ function extractConst(name) {
 }
 
 function extractCurrentLaunchActionPatch(source) {
-  const match = source.match(/let (?:codexLinuxGetSetting=.*?,)?ae=async\(e,t\)=>\{P\.hotkeyWindowLifecycleManager\.hide\(\);.*?;let oe=async\(\)=>\{/);
+  const match = source.match(/let (?:codexLinuxQuitInProgress=.*?,)?(?:codexLinuxGetSetting=.*?,)?ae=async\(e,t\)=>\{P\.hotkeyWindowLifecycleManager\.hide\(\);.*?;let oe=async\(\)=>\{/);
   assert(match, "Could not extract current launch-action patch from smoke bundle");
   return match[0];
 }
