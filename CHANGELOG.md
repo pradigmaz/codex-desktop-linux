@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] - 2026-05-01
+
+### Changed
+
+- The three Linux Computer Use UI gate patches added in 0.6.1 (`applyLinuxComputerUseFeaturePatch`, `applyLinuxComputerUseRendererAvailabilityPatch`, `applyLinuxComputerUseInstallFlowPatch`) are now opt-in. The bundled-plugin manifest gate (`applyLinuxComputerUsePluginGatePatch`) still ships on by default — that is pure platform-port glue. The other three reach into upstream's Statsig fallback, so they apply only when the user opts in via either:
+  - `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` env var at build time (e.g. `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 make build-app`); or
+  - `~/.config/codex-desktop/settings.json` containing `"codex-linux-computer-use-ui-enabled": true`, which is also honoured by the `codex-update-manager` systemd user service when it rebuilds the local package on a new upstream DMG.
+- **Behavioural note for users on 0.6.1:** Computer Use controls in the Codex Desktop UI will disappear after the next auto-updater rebuild unless the persisted settings flag above is set. The MCP backend (plugin manifest gate) still registers; only the UI controls are gated.
+
+### Added
+
+- New `isComputerUseUiEnabled()` helper in `scripts/patch-linux-window-ui.js` that reads both the env var and the persisted settings flag.
+- Smoke test `test_linux_computer_use_ui_opt_in_smoke` covering all three branches (default off, env-var on, settings-flag on).
+
 ## [0.6.1] - 2026-04-30
 
 ### Added
