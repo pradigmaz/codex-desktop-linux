@@ -16,6 +16,8 @@ use std::{
 use tracing::{info, warn};
 
 const CLI_PACKAGE_NAME: &str = "@openai/codex";
+const CLI_NOT_INSTALLED_MESSAGE: &str =
+    "Codex CLI is required but not currently installed. Open the app to retry the automatic install flow, or install it manually with npm.";
 const CLI_VERSION_CHECK_TTL: Duration = Duration::hours(1);
 #[cfg(test)]
 const CLI_INSTALLED_VERSION_TTL: Duration = Duration::hours(1);
@@ -324,9 +326,8 @@ fn mark_cli_missing(state: &mut PersistedState) {
     state.cli_path = None;
     state.cli_installed_version = None;
     state.cli_last_verified_at = None;
-    state.cli_status = CliStatus::Unknown;
-    state.cli_error_message =
-        Some("Codex CLI not found in PATH or known install locations".to_string());
+    state.cli_status = CliStatus::NotInstalled;
+    state.cli_error_message = Some(CLI_NOT_INSTALLED_MESSAGE.to_string());
 }
 
 #[cfg(test)]
@@ -861,9 +862,11 @@ mod tests {
         let original_home = std::env::var_os("HOME");
         let original_path = std::env::var_os("PATH");
         let original_nvm_dir = std::env::var_os("NVM_DIR");
+        let original_codex_cli_path = std::env::var_os("CODEX_CLI_PATH");
         std::env::set_var("HOME", temp.path());
         std::env::set_var("PATH", temp.path().join("missing-bin"));
         std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
 
         let missing_path = temp.path().join("missing-codex");
         let mut state = PersistedState::new(true);
@@ -888,14 +891,65 @@ mod tests {
         } else {
             std::env::remove_var("NVM_DIR");
         }
+        if let Some(cli_path) = original_codex_cli_path {
+            std::env::set_var("CODEX_CLI_PATH", cli_path);
+        } else {
+            std::env::remove_var("CODEX_CLI_PATH");
+        }
 
         assert_eq!(state.cli_path, None);
         assert_eq!(state.cli_installed_version, None);
-        assert_eq!(state.cli_status, CliStatus::Unknown);
+        assert_eq!(state.cli_status, CliStatus::NotInstalled);
         assert_eq!(
             state.cli_error_message.as_deref(),
-            Some("Codex CLI not found in PATH or known install locations")
+            Some(CLI_NOT_INSTALLED_MESSAGE)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_status_marks_missing_cli_as_not_installed() -> Result<()> {
+        let temp = tempdir()?;
+        let paths = test_runtime_paths(temp.path());
+        paths.ensure_dirs()?;
+
+        let original_home = std::env::var_os("HOME");
+        let original_path = std::env::var_os("PATH");
+        let original_nvm_dir = std::env::var_os("NVM_DIR");
+        let original_codex_cli_path = std::env::var_os("CODEX_CLI_PATH");
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("CODEX_CLI_PATH");
+
+        let mut state = PersistedState::new(true);
+        refresh_status(&mut state, &paths)?;
+
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(nvm_dir) = original_nvm_dir {
+            std::env::set_var("NVM_DIR", nvm_dir);
+        } else {
+            std::env::remove_var("NVM_DIR");
+        }
+        if let Some(cli_path) = original_codex_cli_path {
+            std::env::set_var("CODEX_CLI_PATH", cli_path);
+        } else {
+            std::env::remove_var("CODEX_CLI_PATH");
+        }
+
+        assert_eq!(state.cli_path, None);
+        assert_eq!(state.cli_installed_version, None);
+        assert_eq!(state.cli_status, CliStatus::NotInstalled);
+        assert_eq!(state.cli_error_message.as_deref(), Some(CLI_NOT_INSTALLED_MESSAGE));
         Ok(())
     }
 

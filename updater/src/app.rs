@@ -6,7 +6,7 @@ use crate::{
     codex_cli,
     config::{RuntimeConfig, RuntimePaths},
     install, liveness, logging, notify,
-    state::{PersistedState, UpdateStatus},
+    state::{CliStatus, PersistedState, UpdateStatus},
     upstream,
 };
 use anyhow::{Context, Result};
@@ -816,7 +816,7 @@ fn clear_notification_event(
 }
 
 fn cli_is_missing(state: &PersistedState) -> bool {
-    state.cli_path.is_none() && state.cli_installed_version.is_none()
+    state.cli_status == CliStatus::NotInstalled
 }
 
 fn maybe_notify_cli_missing(
@@ -834,7 +834,7 @@ fn maybe_notify_cli_missing(
         enabled,
         CLI_MISSING_NOTIFICATION_EVENT,
         "Codex CLI not installed",
-        "Codex Desktop needs the Codex CLI. Install it with npm or open the app to retry the automatic install flow.",
+        "Codex Desktop needs the Codex CLI. Open the app to retry the automatic install flow, or install it manually with npm.",
     )
 }
 
@@ -1605,10 +1605,10 @@ mod tests {
         paths.ensure_dirs()?;
 
         let mut state = PersistedState::new(true);
-        state.cli_path = None;
-        state.cli_installed_version = None;
-        state.cli_error_message =
-            Some("Codex CLI not found in PATH or known install locations".to_string());
+        state.cli_status = CliStatus::NotInstalled;
+        state.cli_error_message = Some(
+            "Codex CLI is required but not currently installed. Open the app to retry the automatic install flow, or install it manually with npm.".to_string(),
+        );
 
         maybe_notify_cli_missing(&mut state, &paths, false)?;
         let notified_count = state.notified_events.len();
