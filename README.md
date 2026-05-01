@@ -25,7 +25,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
-| Linux Computer Use | ⚠️ opt-in / gated | Native Rust MCP backend (AT-SPI + `ydotool` + GNOME Shell or XDG Desktop Portal). **Also gated by OpenAI's per-account Statsig rollout** — the package can be installed but the feature only appears in the UI when OpenAI enables it for your account. Validated on Ubuntu/GNOME; KDE/wlroots not yet validated. |
+| Linux Computer Use | ✅ opt-in | Native Rust MCP backend (AT-SPI + Wayland Remote Desktop portal with `ydotool` fallback + GNOME Shell or XDG Desktop Portal). Upstream ships Linux excluded from the platform allow-list at multiple gates; this project's ASAR patcher adds Linux to the feature, renderer-availability, and install-flow gates so the controls render and the plugin auto-registers. Validated on Ubuntu/GNOME; KDE/wlroots not yet validated. |
 | Server-gated features (e.g. `gpt-5.5`) | 🟡 server-side | OpenAI rolls per-account, not project-controlled. Building a fresh package does not unlock these. |
 
 ## Quick install
@@ -108,9 +108,20 @@ The response is a structured report covering AT-SPI bus availability, GNOME Shel
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
 ```
 
-### Important caveat
+### How the platform gating works
 
-**Installing the package does not by itself enable Computer Use in the Codex UI.** The feature is also gated by an OpenAI per-account Statsig rollout (`computerUse` feature flag) on top of the platform gate this project unlocks. If your account is not yet in OpenAI's rollout cohort, the plugin is staged but invisible — the same pattern as the `gpt-5.5` model rollout. There is no project-side workaround that doesn't deliberately bypass OpenAI's gating.
+Upstream Codex Desktop excludes Linux from the platform allow-list at four places:
+
+- the bundled-plugin manifest gate (would refuse to register `computer-use` on Linux)
+- `featureGates` in the main bundle (would set `computerUse: false` on Linux)
+- the renderer's availability check (would hide the Computer Use controls on Linux)
+- the install flow availability check (would hide the install onboarding on Linux)
+
+The ASAR patcher (`scripts/patch-linux-window-ui.js`) adds Linux to all four gates, so installing the package is enough — Computer Use shows up in the UI for any user on a working Linux desktop, no per-account opt-in or env vars required.
+
+If a future feature is gated by an OpenAI per-account Statsig rollout (the `gpt-5.5` rollout is the recurring example), this project does not bypass that — those rollouts are decided server-side per account and there is nothing in the local install that controls them.
+
+### Side-by-side dev variant
 
 If you'd like to test the backend without affecting your default install, the side-by-side dev variant builds a separate app under a different ID and webview port:
 
