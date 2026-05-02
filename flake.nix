@@ -80,6 +80,9 @@
           # Patch generated scripts for NixOS systems without /bin/bash.
           if [ -f "${installDir}/start.sh" ]; then
             ${pkgs.gnused}/bin/sed -i '1s|^#!/bin/bash$|#!${pkgs.bash}/bin/bash|' "${installDir}/start.sh"
+            if ! grep -q "NixOS Electron library path" "${installDir}/start.sh"; then
+              ${pkgs.gnused}/bin/sed -i '2i# NixOS Electron library path for dlopen()ed GL/EGL libraries.\nexport LD_LIBRARY_PATH="${electronLibPath}:''${LD_LIBRARY_PATH:-}"' "${installDir}/start.sh"
+            fi
           fi
 
           # Patch the Electron binary for NixOS.
@@ -238,6 +241,7 @@ NODE
 
             makeWrapper "$out/opt/codex-desktop/start.sh" "$out/bin/codex-desktop" \
               --prefix PATH : "${launcherPath}" \
+              --prefix LD_LIBRARY_PATH : "${electronLibPath}" \
               --prefix PATH : "/run/current-system/sw/bin" \
               --prefix PATH : "/etc/profiles/per-user/$(whoami)/bin"
 
