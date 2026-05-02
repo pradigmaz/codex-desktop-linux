@@ -22,7 +22,7 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-qd0LCxoFaG7R8AksuxMldzhZ3t91qzGzXKRmVrK5LLY=";
+          hash = "sha256-sMnMqwFJGYPCENclL0xmiXtBVs4tULzf4TCwoeJTuDM=";
         };
 
         electronLibs = with pkgs; [
@@ -97,6 +97,11 @@
             ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg" "$@"
 
             install_dir="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
+
+            # Patch generated scripts for NixOS systems without /bin/bash.
+            if [ -f "$install_dir/start.sh" ]; then
+              ${pkgs.gnused}/bin/sed -i '1s|^#!/bin/bash$|#!${pkgs.bash}/bin/bash|' "$install_dir/start.sh"
+            fi
 
             # Patch the Electron binary for NixOS.
             if [ -f "$install_dir/electron" ]; then
