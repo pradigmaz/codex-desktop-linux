@@ -933,7 +933,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       const [, hostVar, hasOtherWindowVar, eventVar, windowVar] = closeToTrayMatch;
       patchedSource = patchedSource.replace(
         closeToTrayRegex,
-        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&${hostVar}===\`local\`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
+        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&${hostVar}===\`local\`&&!this.isAppQuitting&&!codexLinuxIsQuitInProgress()&&this.options.canHideLastLocalWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
       );
     } else {
       console.warn("WARN: Could not find close-to-tray condition — skipping Linux close-to-tray patch");

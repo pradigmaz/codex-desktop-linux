@@ -237,6 +237,10 @@ test("adds Linux tray support for current minified window and startup identifier
   const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
 
   assert.match(patched, /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`/);
+  assert.match(
+    patched,
+    /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!codexLinuxIsQuitInProgress\(\)/,
+  );
   assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
   assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
 });
@@ -266,7 +270,7 @@ test("scopes close-to-tray already-patched detection to the handler", () => {
 
   assert.match(
     patched,
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&!codexLinuxIsQuitInProgress\(\)&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
   );
 });
 
