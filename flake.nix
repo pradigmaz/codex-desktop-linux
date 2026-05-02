@@ -61,6 +61,11 @@
         ];
 
         electronLibPath = pkgs.lib.makeLibraryPath electronLibs;
+        runtimeLibPath = pkgs.lib.makeLibraryPath (with pkgs; [
+          libxcrypt-legacy
+          stdenv.cc.cc.lib
+          zlib
+        ]);
         launcherPath = pkgs.lib.makeBinPath (with pkgs; [
           bash
           coreutils
@@ -80,6 +85,34 @@
           # Patch generated scripts for NixOS systems without /bin/bash.
           if [ -f "${installDir}/start.sh" ]; then
             ${pkgs.gnused}/bin/sed -i '1s|^#!/bin/bash$|#!${pkgs.bash}/bin/bash|' "${installDir}/start.sh"
+            if ! grep -q "NixOS Electron library path" "${installDir}/start.sh"; then
+              ${pkgs.gnused}/bin/sed -i '2i# NixOS Electron library path for dlopen()ed GL/EGL libraries.\nexport LD_LIBRARY_PATH="${electronLibPath}:${runtimeLibPath}:''${LD_LIBRARY_PATH:-}"' "${installDir}/start.sh"
+            fi
+            if ! grep -q "codex_nixos_add_runtime_library_dirs" "${installDir}/start.sh"; then
+              ${pkgs.gnused}/bin/sed -i '/^set -euo pipefail$/a\
+\
+codex_nixos_add_runtime_library_dirs() {\
+    local cache_home="''${XDG_CACHE_HOME:-''${HOME:-}/.cache}"\
+    local runtime_root="''${CODEX_PRIMARY_RUNTIME_ROOT:-''${CODEX_RUNTIME_ROOT:-$cache_home/codex-runtimes/codex-primary-runtime}}"\
+    local dir\
+\
+    for dir in \\\
+        "$runtime_root/dependencies/python/lib" \\\
+        "$runtime_root/dependencies/python/lib/python3.12/site-packages/pillow.libs" \\\
+        "$runtime_root/dependencies/python/lib/python3.12/site-packages/numpy.libs" \\\
+        "$runtime_root/dependencies/node/node_modules/@img/sharp-libvips-linux-x64/lib" \\\
+        "$runtime_root/dependencies/node/node_modules/@img/sharp-linux-x64/lib" \\\
+        "$runtime_root/dependencies/node/node_modules/@napi-rs/canvas-linux-x64-gnu"; do\
+        if [ -d "$dir" ]; then\
+            LD_LIBRARY_PATH="$dir:''${LD_LIBRARY_PATH:-}"\
+        fi\
+    done\
+\
+    export LD_LIBRARY_PATH\
+}\
+\
+codex_nixos_add_runtime_library_dirs' "${installDir}/start.sh"
+            fi
           fi
 
           # Patch the Electron binary for NixOS.
@@ -238,6 +271,8 @@ NODE
 
             makeWrapper "$out/opt/codex-desktop/start.sh" "$out/bin/codex-desktop" \
               --prefix PATH : "${launcherPath}" \
+              --prefix LD_LIBRARY_PATH : "${electronLibPath}" \
+              --prefix LD_LIBRARY_PATH : "${runtimeLibPath}" \
               --prefix PATH : "/run/current-system/sw/bin" \
               --prefix PATH : "/etc/profiles/per-user/$(whoami)/bin"
 
