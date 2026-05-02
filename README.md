@@ -150,8 +150,9 @@ The package installs a companion service named `codex-update-manager`.
 - On openSUSE, that final install step is `zypper --non-interactive --no-gpg-checks install` against the locally rebuilt `.rpm` (the package is unsigned because it is built locally).
 - A failed or dismissed `pkexec` prompt (exit `126` / `127`) keeps the candidate `ReadyToInstall` and retries on the next app exit, instead of moving to a permanent `Failed` state.
 - An `Installing` state interrupted by a crash or restart is automatically recovered.
-- Before Electron launches, the launcher only resolves a usable Codex CLI path. If the CLI is missing and the launcher was started from an interactive terminal, it prompts before attempting an automatic install. The updater CLI preflight then runs in the background by default so npm registry checks and follow-up updates do not block the first window. Set `CODEX_SYNC_CLI_PREFLIGHT=1` to restore the synchronous preflight for debugging.
+- Before Electron launches, the launcher only resolves a usable Codex CLI path. If the CLI is missing and the launcher was started from an interactive terminal, it prompts before attempting an automatic install. GUI launches use the updater prompt flow for the same recovery path. The updater CLI preflight then runs in the background by default so npm registry checks and follow-up updates do not block the first window. Set `CODEX_SYNC_CLI_PREFLIGHT=1` to restore the synchronous preflight for debugging.
 - That CLI preflight is best-effort: 1-hour cooldown for registry checks, falls back to `npm install -g --prefix ~/.local` if a global install fails, and keeps the app launch on the current CLI when the automatic refresh does not succeed.
+- Automatic installation of a missing CLI is launcher-scoped. The daemon and `codex-update-manager status` report a missing dependency as `cli_status: NotInstalled` and may notify, but they do not install the CLI on their own.
 
 Inspect the live service and runtime files with:
 

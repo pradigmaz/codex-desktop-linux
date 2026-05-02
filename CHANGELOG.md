@@ -7,15 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- The three Linux Computer Use UI gate patches added in 0.6.1 (`applyLinuxComputerUseFeaturePatch`, `applyLinuxComputerUseRendererAvailabilityPatch`, `applyLinuxComputerUseInstallFlowPatch`) are now opt-in. The bundled-plugin manifest gate (`applyLinuxComputerUsePluginGatePatch`) still ships on by default — that is pure platform-port glue. The other three reach into upstream's Statsig fallback, so they apply only when the user opts in via either:
-  - `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` env var at build time (e.g. `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 make build-app`); or
-  - `~/.config/codex-desktop/settings.json` containing `"codex-linux-computer-use-ui-enabled": true`, which is also honoured by the `codex-update-manager` systemd user service when it rebuilds the local package on a new upstream DMG.
-- **Behavioural note for users on 0.6.1:** Computer Use controls in the Codex Desktop UI will disappear after the next auto-updater rebuild unless the persisted settings flag above is set. The MCP backend (plugin manifest gate) still registers; only the UI controls are gated.
+- Missing Codex CLI recovery is now exposed as an explicit `cli_status: NotInstalled` state in updater status output and persisted state, instead of overloading `Unknown`.
+- Automatic installation of a missing Codex CLI is now documented and enforced as launcher-scoped behavior; the daemon and `codex-update-manager status` only report and notify when the dependency is missing.
+- The Computer Use in-app UI surface is now opt-in. The MCP backend still registers by default; the UI controls are enabled when the user sets `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` at build time, or persists `"codex-linux-computer-use-ui-enabled": true` in `~/.config/codex-desktop/settings.json` (also honoured by the `codex-update-manager` user service across rebuilds). Existing users who relied on the UI being on by default need to set one of these once.
 
 ### Added
 
 - New `isComputerUseUiEnabled()` helper in `scripts/patch-linux-window-ui.js` that reads both the env var and the persisted settings flag.
 - Smoke test `test_linux_computer_use_ui_opt_in_smoke` covering all three branches (default off, env-var on, settings-flag on).
+
+### Fixed
+
+- Launcher error messages now distinguish between a CLI that is missing versus an automatic installation attempt that failed, clarifying the supported recovery path.
+- Missing-CLI desktop notifications now key off the explicit `NotInstalled` state instead of inferring absence from cleared fields.
 
 ## [0.6.1] - 2026-04-30
 

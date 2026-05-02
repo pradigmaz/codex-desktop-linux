@@ -6,7 +6,7 @@ use crate::{
     codex_cli,
     config::{RuntimeConfig, RuntimePaths},
     install, liveness, logging, notify,
-    state::{PersistedState, UpdateStatus},
+    state::{CliStatus, PersistedState, UpdateStatus},
     upstream,
 };
 use anyhow::{Context, Result};
@@ -186,7 +186,7 @@ async fn run_daemon(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::refresh_cached_status(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if packaged_runtime_removed(config) {
@@ -244,7 +244,7 @@ async fn run_check_now(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     recover_interrupted_install(state, paths)?;
-    codex_cli::refresh_cached_status(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
     maybe_notify_cli_missing(state, paths, config.notifications)?;
     maybe_notify_installed(state, paths, config.notifications)?;
     if if_stale && upstream_check_is_fresh(config, state) {
@@ -265,7 +265,7 @@ fn upstream_check_is_fresh(config: &RuntimeConfig, state: &PersistedState) -> bo
 }
 
 fn run_status(state: &mut PersistedState, paths: &RuntimePaths, json: bool) -> Result<()> {
-    codex_cli::refresh_status(state, paths)?;
+    codex_cli::reconcile_if_present(state, paths)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(state)?);
@@ -487,6 +487,13 @@ async fn run_check_cycle(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    if let Err(error) = codex_cli::reconcile_if_present(state, paths) {
+        warn!(
+            ?error,
+            "unable to reconcile Codex CLI before checking upstream packages"
+        );
+    }
+
     let retrying_failed_update = state.status == UpdateStatus::Failed;
 
     if update_install_is_pending(&state.status) {
@@ -812,7 +819,7 @@ fn clear_notification_event(
 }
 
 fn cli_is_missing(state: &PersistedState) -> bool {
-    state.cli_path.is_none() && state.cli_installed_version.is_none()
+    state.cli_status == CliStatus::NotInstalled
 }
 
 fn maybe_notify_cli_missing(
@@ -830,7 +837,7 @@ fn maybe_notify_cli_missing(
         enabled,
         CLI_MISSING_NOTIFICATION_EVENT,
         "Codex CLI not installed",
-        "Codex Desktop needs the Codex CLI. Install it with npm or open the app to retry the automatic install flow.",
+        "Codex Desktop needs the Codex CLI. Open the app to retry the automatic install flow, or install it manually with npm.",
     )
 }
 
@@ -1270,6 +1277,7 @@ mod tests {
 
     #[test]
     fn prompt_install_cli_does_not_treat_non_executable_file_as_installed() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
         let temp = tempfile::tempdir()?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -1601,10 +1609,10 @@ mod tests {
         paths.ensure_dirs()?;
 
         let mut state = PersistedState::new(true);
-        state.cli_path = None;
-        state.cli_installed_version = None;
-        state.cli_error_message =
-            Some("Codex CLI not found in PATH or known install locations".to_string());
+        state.cli_status = CliStatus::NotInstalled;
+        state.cli_error_message = Some(
+            "Codex CLI is required but not currently installed. Open the app to retry the automatic install flow, or install it manually with npm.".to_string(),
+        );
 
         maybe_notify_cli_missing(&mut state, &paths, false)?;
         let notified_count = state.notified_events.len();
