@@ -16,12 +16,23 @@ PACMAN_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)-[0-9]*.pkg.tar.*
 .DEFAULT_GOAL := help
 
 NATIVE_PKG_FORMAT_CMD = format=""; \
+os_release_token_match() { \
+	local expected token; \
+	for token in $${ID:-} $${ID_LIKE:-}; do \
+		for expected in "$$@"; do \
+			if [ "$$token" = "$$expected" ]; then \
+				return 0; \
+			fi; \
+		done; \
+	done; \
+	return 1; \
+}; \
 if [ -r /etc/os-release ]; then . /etc/os-release; \
-	if command -v pacman >/dev/null 2>&1 && [[ " $${ID:-} $${ID_LIKE:-} " =~ (arch|archlinux|manjaro|endeavouros|artix) ]]; then \
+	if os_release_token_match arch archlinux manjaro endeavouros artix; then \
 		format="pacman"; \
-	elif command -v rpmbuild >/dev/null 2>&1 && [[ " $${ID:-} $${ID_LIKE:-} " =~ (fedora|rhel|centos|rocky|almalinux|ol|sles|suse|opensuse) ]]; then \
+	elif os_release_token_match fedora rhel centos rocky almalinux ol sles suse opensuse; then \
 		format="rpm"; \
-	elif command -v dpkg-deb >/dev/null 2>&1 && [[ " $${ID:-} $${ID_LIKE:-} " =~ (debian|ubuntu|linuxmint|pop|elementary|zorin) ]]; then \
+	elif os_release_token_match debian ubuntu linuxmint pop elementary zorin; then \
 		format="deb"; \
 	fi; \
 fi; \
