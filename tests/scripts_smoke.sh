@@ -47,6 +47,17 @@ assert_occurrence_count() {
     [ "$actual" = "$expected" ] || fail "Expected '$pattern' to appear $expected times in $path, found $actual"
 }
 
+make_fake_browser_use_upstream_app() {
+    local app_dir="$1"
+    local resources_dir="$app_dir/Contents/Resources"
+    mkdir -p \
+        "$resources_dir/plugins/openai-bundled/.agents/plugins" \
+        "$resources_dir/plugins/openai-bundled/plugins/browser-use"
+    cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
+{"plugins":[{"name":"browser-use","source":{"source":"local","path":"./plugins/browser-use"},"policy":{"installation":"AVAILABLE"}}]}
+JSON
+}
+
 make_fake_app() {
     local app_dir="$1"
     mkdir -p "$app_dir"
@@ -534,6 +545,61 @@ test_side_by_side_launcher_identity() {
     ln -s "$app_dir/start.sh" "$bin_dir/codex-cua-lab"
     XDG_CACHE_HOME="$workspace/cache" XDG_STATE_HOME="$workspace/state" "$bin_dir/codex-cua-lab" --help >"$symlink_help_log"
     assert_contains "$symlink_help_log" "Launches the Codex CUA Lab app."
+}
+
+test_browser_use_node_repl_fallback_runtime() {
+    info "Checking Browser Use node_repl fallback runtime"
+    if [ "$(uname -m)" != "x86_64" ]; then
+        info "Skipping x86_64-only Browser Use fallback runtime test"
+        return 0
+    fi
+
+    local workspace="$TMP_DIR/browser-use-node-repl-fallback"
+    local app_dir="$workspace/Codex.app"
+    local install_dir="$workspace/install"
+    local archive_root="$workspace/archive-root"
+    local archive="$workspace/runtime.tar.xz"
+    local output_log="$workspace/output.log"
+    local archive_sha
+
+    mkdir -p "$workspace" "$install_dir/resources" "$archive_root/codex-primary-runtime/dependencies/bin"
+    make_fake_browser_use_upstream_app "$app_dir"
+
+    # Simulate the current upstream DMG shape: node_repl exists, but it is not a Linux ELF.
+    printf '\xfe\xed\xfa\xcf' > "$app_dir/Contents/Resources/node_repl"
+    chmod +x "$app_dir/Contents/Resources/node_repl"
+
+    cp /bin/true "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
+    chmod 0755 "$archive_root/codex-primary-runtime/dependencies/bin/node_repl"
+    tar -cJf "$archive" -C "$archive_root" codex-primary-runtime
+    archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        INSTALL_DIR="$install_dir"
+        WORK_DIR="$workspace/work"
+        ARCH="$(uname -m)"
+        ICON_SOURCE="$workspace/missing-icon.png"
+        CODEX_APP_ID="codex-desktop"
+        XDG_CACHE_HOME="$workspace/xdg-cache"
+        CODEX_NODE_REPL_PATH=
+        CODEX_LINUX_NODE_REPL_SOURCE=
+        CODEX_BROWSER_USE_RUNTIME_CACHE_DIR="$workspace/cache"
+        CODEX_BROWSER_USE_NODE_REPL_RUNTIME_URL="file://$archive"
+        CODEX_BROWSER_USE_NODE_REPL_RUNTIME_SHA256="$archive_sha"
+        mkdir -p "$WORK_DIR"
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        stage_linux_computer_use_plugin() { return 1; }
+        install_bundled_plugin_resources "$app_dir"
+    ) >"$output_log" 2>&1
+
+    assert_file_exists "$install_dir/resources/node_repl"
+    cmp -s /bin/true "$install_dir/resources/node_repl" || fail "Expected fallback node_repl to come from the runtime archive"
+    assert_contains "$output_log" "Browser Use node_repl runtime is not a Linux executable for x86_64; skipping"
+    assert_contains "$output_log" "Downloading Browser Use node_repl fallback runtime"
 }
 
 make_fake_extracted_asar() {
@@ -1586,6 +1652,7 @@ main() {
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
+    test_browser_use_node_repl_fallback_runtime
     test_launcher_template_sanity
     test_side_by_side_launcher_identity
     test_linux_file_manager_patch_smoke
