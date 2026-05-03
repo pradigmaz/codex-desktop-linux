@@ -1251,6 +1251,24 @@ function applyLinuxComputerUseInstallFlowPatch(currentSource) {
   return currentSource;
 }
 
+function applyBrowserUseNodeReplApprovalPatch(currentSource) {
+  const approvalPatch =
+    "startup_timeout_sec:120,tools:{js:{approval_mode:`approve`}},env:{";
+  if (currentSource.includes(approvalPatch)) {
+    return currentSource;
+  }
+
+  const needle = "startup_timeout_sec:120,env:{";
+  if (!currentSource.includes(needle)) {
+    console.warn(
+      "WARN: Could not find Browser Use node_repl config insertion point — skipping node_repl approval patch",
+    );
+    return currentSource;
+  }
+
+  return currentSource.replace(needle, approvalPatch);
+}
+
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   let patchedSource = currentSource;
 
@@ -1710,6 +1728,7 @@ function patchMainBundleSource(source, iconAsset) {
     patched = applyLinuxComputerUseFeaturePatch(patched);
   }
   patched = applyLinuxComputerUsePluginGatePatch(patched);
+  patched = applyBrowserUseNodeReplApprovalPatch(patched);
   patched = applyLinuxAppUpdaterMenuPatch(patched);
   patched = applyLinuxTrayCloseSettingPatch(patched);
   patched = applyLinuxSettingsPersistencePatch(patched);
@@ -1963,6 +1982,7 @@ module.exports = {
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
   applyLinuxComputerUseInstallFlowPatch,
+  applyBrowserUseNodeReplApprovalPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
   patchLinuxAppUpdaterBridge,

@@ -226,6 +226,72 @@ remove_macos_sidecar_files() {
     find "$root" -type f -name '*:com.apple.*' -delete
 }
 
+patch_browser_use_site_status_allowlist_fallback() {
+    local client="$1"
+
+    if grep -q "codexLinuxSiteStatusAllowlistFallback" "$client"; then
+        return 0
+    fi
+
+    python3 - "$client" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+needle = (
+    'async fetchBlocked(t){let n=await MT(t.endpoint,{method:"GET"});'
+    'if(!n.ok)throw new Error(Rt(`Browser Use cannot determine if ${t.displayUrl} is allowed. '
+    'Please try again later or use another source.`));let r=await n.json();return R7(r)}'
+)
+replacement = (
+    'async fetchBlocked(t){let n;try{n=await MT(t.endpoint,{method:"GET"})}catch(r){'
+    'if(String(t?.endpoint??"").includes("/aura/site_status")&&String(r?.message??r).includes("URL is not allowlisted"))return console.warn'
+    '("codexLinuxSiteStatusAllowlistFallback",t.endpoint),!1;throw r}'
+    'if(!n.ok)throw new Error(Rt(`Browser Use cannot determine if ${t.displayUrl} is allowed. '
+    'Please try again later or use another source.`));let r=await n.json();return R7(r)}'
+)
+if needle not in source:
+    print(
+        "WARN: Could not find Browser Use site_status allowlist fallback insertion point — leaving browser-client.mjs unchanged",
+        file=sys.stderr,
+    )
+    raise SystemExit(0)
+path.write_text(source.replace(needle, replacement, 1), encoding="utf-8")
+PY
+}
+
+stage_browser_use_plugin_from_upstream() {
+    local source_plugin="$1"
+    local target_plugins="$2"
+    local target_plugin="$target_plugins/browser-use"
+    local source_client="$source_plugin/scripts/browser-client.mjs"
+    local target_client="$target_plugin/scripts/browser-client.mjs"
+
+    if [ ! -d "$source_plugin" ]; then
+        warn "Browser Use bundled plugin resources not found in upstream app; skipping Browser Use"
+        return 1
+    fi
+
+    if [ ! -f "$source_plugin/.codex-plugin/plugin.json" ]; then
+        warn "Browser Use plugin manifest not found in upstream app; skipping Browser Use"
+        return 1
+    fi
+
+    if [ ! -f "$source_client" ]; then
+        warn "Browser Use browser-client.mjs not found in upstream app; skipping Browser Use"
+        return 1
+    fi
+
+    rm -rf "$target_plugin"
+    cp -R "$source_plugin" "$target_plugin"
+    remove_macos_sidecar_files "$target_plugin"
+    patch_browser_use_site_status_allowlist_fallback "$target_client"
+
+    info "Browser Use plugin staged from upstream DMG"
+    return 0
+}
+
 write_bundled_plugins_marketplace() {
     local source="$1"
     local destination="$2"
@@ -290,13 +356,8 @@ install_bundled_plugin_resources() {
 
     mkdir -p "$bundled_plugins_dir/plugins" "$bundled_plugins_dir/.agents/plugins"
 
-    if [ -d "$source_plugin" ]; then
-        rm -rf "$bundled_plugins_dir/plugins/browser-use"
-        cp -R "$source_plugin" "$bundled_plugins_dir/plugins/browser-use"
-        remove_macos_sidecar_files "$bundled_plugins_dir/plugins/browser-use"
+    if stage_browser_use_plugin_from_upstream "$source_plugin" "$bundled_plugins_dir/plugins"; then
         include_browser=1
-    else
-        warn "Browser Use bundled plugin resources not found in upstream app; skipping Browser Use"
     fi
 
     if stage_linux_computer_use_plugin "$bundled_plugins_dir/plugins"; then

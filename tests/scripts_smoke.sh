@@ -52,10 +52,17 @@ make_fake_browser_use_upstream_app() {
     local resources_dir="$app_dir/Contents/Resources"
     mkdir -p \
         "$resources_dir/plugins/openai-bundled/.agents/plugins" \
-        "$resources_dir/plugins/openai-bundled/plugins/browser-use"
+        "$resources_dir/plugins/openai-bundled/plugins/browser-use/.codex-plugin" \
+        "$resources_dir/plugins/openai-bundled/plugins/browser-use/scripts"
     cat > "$resources_dir/plugins/openai-bundled/.agents/plugins/marketplace.json" <<'JSON'
 {"plugins":[{"name":"browser-use","source":{"source":"local","path":"./plugins/browser-use"},"policy":{"installation":"AVAILABLE"}}]}
 JSON
+    cat > "$resources_dir/plugins/openai-bundled/plugins/browser-use/.codex-plugin/plugin.json" <<'JSON'
+{"name":"browser-use","version":"0.1.0-alpha1"}
+JSON
+    cat > "$resources_dir/plugins/openai-bundled/plugins/browser-use/scripts/browser-client.mjs" <<'JS'
+class Wm{async fetchBlocked(t){let n=await MT(t.endpoint,{method:"GET"});if(!n.ok)throw new Error(Rt(`Browser Use cannot determine if ${t.displayUrl} is allowed. Please try again later or use another source.`));let r=await n.json();return R7(r)}}export function setupAtlasRuntime() {}
+JS
 }
 
 make_fake_app() {
@@ -479,6 +486,7 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_UPDATE_MANAGER_PATH"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "resolve_update_manager_path"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "run_update_manager"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "sync_browser_use_bundled_plugin_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "Install it now? \\[Y/n\\]"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "is_interactive_terminal"
     assert_contains "$REPO_DIR/updater/src/app.rs" "kdialog"
@@ -597,7 +605,9 @@ test_browser_use_node_repl_fallback_runtime() {
     ) >"$output_log" 2>&1
 
     assert_file_exists "$install_dir/resources/node_repl"
+    assert_file_exists "$install_dir/resources/plugins/openai-bundled/plugins/browser-use/scripts/browser-client.mjs"
     cmp -s /bin/true "$install_dir/resources/node_repl" || fail "Expected fallback node_repl to come from the runtime archive"
+    assert_contains "$install_dir/resources/plugins/openai-bundled/plugins/browser-use/scripts/browser-client.mjs" "codexLinuxSiteStatusAllowlistFallback"
     assert_contains "$output_log" "Browser Use node_repl runtime is not a Linux executable for x86_64; skipping"
     assert_contains "$output_log" "Downloading Browser Use node_repl fallback runtime"
 }

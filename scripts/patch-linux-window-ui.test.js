@@ -15,6 +15,7 @@ const {
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxComputerUseRendererAvailabilityPatch,
+  applyBrowserUseNodeReplApprovalPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
   applyLinuxFileManagerPatch,
@@ -692,6 +693,16 @@ test("allows Computer Use install flow on Linux", () => {
     patched,
     /re=!ne\.isLoading&&ne\.enabled\|\|navigator\.userAgent\.includes\(`Linux`\)/,
   );
+});
+
+test("auto-approves the app-provided Browser Use node_repl bridge", () => {
+  const source =
+    "return{[`mcp_servers.${pt}`]:{command:i.nodeReplPath,args:[],startup_timeout_sec:120,env:{[dt]:l,[ft]:i.nodePath}}}";
+
+  const patched = applyPatchTwice(applyBrowserUseNodeReplApprovalPatch, source);
+
+  assert.match(patched, /tools:\{js:\{approval_mode:`approve`\}\}/);
+  assert.match(patched, /env:\{\[dt\]:l,\[ft\]:i\.nodePath/);
 });
 
 function withIsolatedHome(body) {
