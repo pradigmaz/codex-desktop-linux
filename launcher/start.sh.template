@@ -593,7 +593,13 @@ find_running_app_pid() {
         fi
     fi
 
+    return 1
+}
+
+discover_running_app_pid() {
+    local pid
     local proc_exe
+
     for proc_exe in /proc/[0-9]*/exe; do
         [ -e "$proc_exe" ] || continue
         pid="${proc_exe#/proc/}"
@@ -620,7 +626,7 @@ needs_cold_start() {
 }
 
 detect_warm_start() {
-    if RUNNING_APP_PID="$(find_running_app_pid)"; then
+    if RUNNING_APP_PID="$(find_running_app_pid)" || { [ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"; }; then
         echo "$RUNNING_APP_PID" > "$APP_PID_FILE"
         if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then
             WARM_START=0
@@ -660,6 +666,25 @@ try:
     client.sendall(payload)
 finally:
     client.close()
+PY
+}
+
+webview_origin_is_reachable() {
+    verify_webview_origin "$WEBVIEW_ORIGIN/index.html" >/dev/null 2>&1
+}
+
+webview_port_is_open() {
+    python3 - "$CODEX_LINUX_WEBVIEW_PORT" <<'PY' 2>/dev/null
+import socket
+import sys
+
+port = int(sys.argv[1])
+s = socket.socket()
+s.settimeout(0.2)
+try:
+    s.connect(("127.0.0.1", port))
+finally:
+    s.close()
 PY
 }
 
@@ -844,6 +869,12 @@ adopt_existing_webview_server() {
         return 0
     fi
 
+    return 1
+}
+
+adopt_discovered_webview_server() {
+    local pid
+
     if pid="$(discover_webview_server_pid)"; then
         echo "$pid" > "$WEBVIEW_PID_FILE"
         if running_app_is_active; then
@@ -865,7 +896,7 @@ ensure_webview_server() {
     fi
 
     if adopt_existing_webview_server; then
-        if verify_webview_origin "$WEBVIEW_ORIGIN/index.html" >/dev/null 2>&1; then
+        if webview_origin_is_reachable; then
             echo "Reusing existing verified webview server on :$CODEX_LINUX_WEBVIEW_PORT"
             log_phase "webview_reused"
             return 0
@@ -877,11 +908,31 @@ ensure_webview_server() {
         fi
     fi
 
-    stop_stale_webview_server
+    if webview_port_is_open && webview_origin_is_reachable; then
+        if adopt_discovered_webview_server; then
+            echo "Reusing existing verified webview server on :$CODEX_LINUX_WEBVIEW_PORT"
+            log_phase "webview_reused"
+            return 0
+        fi
 
-    if verify_webview_origin "$WEBVIEW_ORIGIN/index.html" >/dev/null 2>&1; then
         notify_error "$CODEX_LINUX_APP_DISPLAY_NAME webview port $CODEX_LINUX_WEBVIEW_PORT is already serving Codex content, but it is not owned by this launcher. Stop the other webview server and try again."
         exit 1
+    fi
+
+    if webview_port_is_open; then
+        stop_stale_webview_server
+        if webview_origin_is_reachable; then
+            if adopt_discovered_webview_server; then
+                echo "Reusing existing verified webview server on :$CODEX_LINUX_WEBVIEW_PORT"
+                log_phase "webview_reused"
+                return 0
+            fi
+        fi
+
+        if webview_port_is_open; then
+            notify_error "$CODEX_LINUX_APP_DISPLAY_NAME webview port $CODEX_LINUX_WEBVIEW_PORT is already in use. Stop the other process and try again."
+            exit 1
+        fi
     fi
 
     stop_owned_webview_server
