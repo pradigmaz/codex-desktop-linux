@@ -68,7 +68,7 @@ pub async fn build_update(
     dmg_path: &Path,
 ) -> Result<BuildArtifacts> {
     let workspace = BuilderWorkspace::prepare(&config.workspace_root, candidate_version)?;
-    let build_path = build_command_path();
+    let build_path = build_command_path(&config.builder_bundle_root);
 
     state.status = UpdateStatus::PreparingWorkspace;
     state.artifact_paths.workspace_dir = Some(workspace.workspace_dir.clone());
@@ -82,6 +82,10 @@ pub async fn build_update(
         Command::new(workspace.bundle_dir.join("install.sh"))
             .arg(dmg_path)
             .env("CODEX_INSTALL_DIR", &workspace.app_dir)
+            .env(
+                "CODEX_MANAGED_NODE_SOURCE",
+                config.builder_bundle_root.join("node-runtime"),
+            )
             .env("PATH", &build_path)
             .current_dir(&workspace.bundle_dir),
         &workspace.install_log,
@@ -287,13 +291,23 @@ fn is_native_package_file(path: &Path) -> bool {
             .any(|suffix| name.ends_with(suffix))
 }
 
-fn build_command_path() -> OsString {
-    let mut entries = preferred_node_bin_dirs();
+fn build_command_path(builder_bundle_root: &Path) -> OsString {
+    let mut entries = managed_node_bin_dirs(builder_bundle_root);
+    entries.extend(preferred_node_bin_dirs());
     entries.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
     entries.extend(system_bin_dirs());
     std::env::join_paths(entries).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn managed_node_bin_dirs(builder_bundle_root: &Path) -> Vec<PathBuf> {
+    let bin_dir = builder_bundle_root.join("node-runtime/bin");
+    if is_node_toolchain_dir(&bin_dir) {
+        vec![bin_dir]
+    } else {
+        Vec::new()
+    }
 }
 
 fn system_bin_dirs() -> Vec<PathBuf> {
@@ -710,10 +724,25 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
 
     #[test]
     fn build_command_path_includes_system_dirs() {
-        let path = build_command_path();
+        let path = build_command_path(Path::new("/tmp/missing-codex-builder"));
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
 
         assert!(directories.iter().any(|dir| dir == Path::new("/usr/bin")));
         assert!(directories.iter().any(|dir| dir == Path::new("/bin")));
+    }
+
+    #[test]
+    fn build_command_path_prefers_packaged_managed_node_runtime() -> Result<()> {
+        let temp = tempdir()?;
+        let runtime_bin = temp.path().join("node-runtime/bin");
+        fs::create_dir_all(&runtime_bin)?;
+        for binary in ["node", "npm", "npx"] {
+            fs::write(runtime_bin.join(binary), b"bin")?;
+        }
+
+        let path = build_command_path(temp.path());
+        let directories = std::env::split_paths(&path).collect::<Vec<_>>();
+        assert_eq!(directories.first(), Some(&runtime_bin));
+        Ok(())
     }
 }

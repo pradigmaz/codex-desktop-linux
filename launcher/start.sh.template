@@ -26,6 +26,7 @@ WEBVIEW_PID_FILE="$APP_STATE_DIR/webview.pid"
 LAUNCH_ACTION_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$APP_STATE_DIR}/$CODEX_LINUX_APP_ID"
 LAUNCH_ACTION_SOCKET="$LAUNCH_ACTION_RUNTIME_DIR/launch-action.sock"
 PACKAGED_RUNTIME_HELPER="$SCRIPT_DIR/.codex-linux/codex-packaged-runtime.sh"
+MANAGED_NODE_BIN_DIR="$SCRIPT_DIR/resources/node-runtime/bin"
 APP_NOTIFICATION_ICON_NAME="$CODEX_LINUX_APP_ID"
 APP_NOTIFICATION_ICON_BUNDLE="$SCRIPT_DIR/.codex-linux/$APP_NOTIFICATION_ICON_NAME.png"
 APP_NOTIFICATION_ICON_SYSTEM="/usr/share/icons/hicolor/256x256/apps/$APP_NOTIFICATION_ICON_NAME.png"
@@ -265,6 +266,16 @@ export_packaged_runtime_env() {
     fi
 }
 
+prepend_managed_node_runtime_to_path() {
+    [ -x "$MANAGED_NODE_BIN_DIR/node" ] || return 0
+
+    case ":$PATH:" in
+        *":$MANAGED_NODE_BIN_DIR:"*) ;;
+        *) export PATH="$MANAGED_NODE_BIN_DIR:$PATH" ;;
+    esac
+    export CODEX_MANAGED_NODE_RUNTIME_DIR="$SCRIPT_DIR/resources/node-runtime"
+}
+
 browser_use_plugin_version() {
     local plugin_json="$1"
 
@@ -332,12 +343,18 @@ resolve_browser_use_runtime_env() {
     fi
 
     if [ -z "${CODEX_BROWSER_USE_NODE_PATH:-}" ]; then
-        if [ -x "$SCRIPT_DIR/resources/node" ]; then
+        if [ -x "$MANAGED_NODE_BIN_DIR/node" ]; then
+            export CODEX_BROWSER_USE_NODE_PATH="$MANAGED_NODE_BIN_DIR/node"
+        elif [ -x "$SCRIPT_DIR/resources/node" ]; then
             export CODEX_BROWSER_USE_NODE_PATH="$SCRIPT_DIR/resources/node"
         elif command -v node >/dev/null 2>&1; then
             CODEX_BROWSER_USE_NODE_PATH="$(command -v node)"
             export CODEX_BROWSER_USE_NODE_PATH
         fi
+    fi
+
+    if [ -z "${NODE_REPL_NODE_PATH:-}" ] && [ -n "${CODEX_BROWSER_USE_NODE_PATH:-}" ]; then
+        export NODE_REPL_NODE_PATH="$CODEX_BROWSER_USE_NODE_PATH"
     fi
 
     if [ -z "${CODEX_NODE_REPL_PATH:-}" ]; then
@@ -1111,6 +1128,7 @@ launch_electron() {
 hydrate_graphical_session_env
 configure_side_by_side_app_env
 load_packaged_runtime_helper
+prepend_managed_node_runtime_to_path
 register_url_scheme_handlers
 clear_stale_pid_file
 detect_warm_start
@@ -1180,5 +1198,6 @@ fi
 resolve_browser_use_runtime_env
 
 echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
+echo "Using managed Node.js runtime=${CODEX_MANAGED_NODE_RUNTIME_DIR:-$SCRIPT_DIR/resources/node-runtime}"
 
 launch_electron "$@"

@@ -19,13 +19,12 @@ Run the helper to install them automatically:
   bash scripts/install-deps.sh
 
 Or install manually:
-  # Debian/Ubuntu: install Node.js 20+ with npm/npx from NodeSource, nvm, or another compatible source, then:
   sudo apt install python3 p7zip-full curl unzip build-essential                   # Debian/Ubuntu
-  sudo dnf install nodejs npm python3 7zip curl unzip @development-tools            # Fedora 41+ (dnf5)
-  sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip                # Fedora <41 (dnf)
+  sudo dnf install python3 7zip curl unzip @development-tools                       # Fedora 41+ (dnf5)
+  sudo dnf install python3 p7zip p7zip-plugins curl unzip                           # Fedora <41 (dnf)
     && sudo dnf groupinstall 'Development Tools'
-  sudo pacman -S nodejs npm python p7zip curl unzip zstd base-devel                 # Arch
-  sudo zypper install nodejs-default npm-default python3 p7zip-full curl unzip      # openSUSE
+  sudo pacman -S python p7zip curl unzip zstd base-devel                            # Arch
+  sudo zypper install python3 p7zip-full curl unzip                                 # openSUSE
     && sudo zypper install -t pattern devel_basis
 EOF
 }
@@ -149,17 +148,12 @@ prepare_install() {
 # ---- Check dependencies ----
 check_deps() {
     local missing=()
-    for cmd in node npm npx python3 7z curl unzip; do
+    for cmd in python3 7z curl unzip tar; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if [ ${#missing[@]} -ne 0 ]; then
         error "Missing dependencies: ${missing[*]}
 $(dependency_help)"
-    fi
-
-    NODE_MAJOR=$(node -v | cut -d. -f1 | tr -d v)
-    if [ "$NODE_MAJOR" -lt 20 ]; then
-        error "Node.js 20+ required (found $(node -v))"
     fi
 
     if ! command -v make &>/dev/null || ! command -v g++ &>/dev/null; then
@@ -185,5 +179,5 @@ If ~/.local/bin is not on your PATH, add it before re-running this script:
 Set SEVENZIP_SYSTEM_INSTALL=1 to install into /usr/local/bin instead."
     fi
 
-    info "All dependencies found (using $SEVEN_ZIP_CMD)"
+    info "All system dependencies found (using $SEVEN_ZIP_CMD)"
 }

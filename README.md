@@ -206,9 +206,10 @@ Runtime files live in standard XDG locations:
 
 You need:
 
-- **Node.js 20+** with `npm` and `npx`
 - `python3`, `7z` (or `7zz`), `curl`, `unzip`, `make`, `g++`
 - **Rust toolchain** (`cargo`) for the `codex-update-manager` and `codex-computer-use-linux` crates
+
+The installer downloads a managed Linux Node.js runtime into `codex-app/resources/node-runtime` and uses it for `node`, `npm`, and `npx` during the build. Existing `nvm`, asdf, Volta, NodeSource, or nodejs.org tarball installs are still fine, but they are no longer required for this project.
 
 The easiest setup is the bundled bootstrap:
 
@@ -220,14 +221,12 @@ It auto-detects `apt`, `dnf5`, `dnf`, `pacman`, or `zypper`, installs system pac
 
 #### Apt-specific (Debian / Ubuntu / Pop!_OS / Mint)
 
-Stock `apt install nodejs` on Ubuntu 22.04, 24.04, and Debian 12 ships Node.js 18, which is too old. `install-deps.sh` first tries the distro `nodejs` candidate; if it's < Node 20 it bootstraps Node.js 22 from NodeSource:
+`install-deps.sh` can still bootstrap NodeSource Node.js for users who want a system Node.js, but the Codex Desktop build no longer requires distro `nodejs` / `npm` packages:
 
 ```bash
 bash scripts/install-deps.sh                       # bootstraps Node 22 if needed
 NODEJS_MAJOR=24 bash scripts/install-deps.sh       # bootstrap a different maintained line
 ```
-
-If you install dependencies manually on Debian or Ubuntu, install Node.js 20+ with `npm` and `npx` from NodeSource, `nvm`, or another compatible source before running `./install.sh`. Do not rely on plain distro `apt install nodejs npm` unless your repos provide Node.js 20 or newer.
 
 Ubuntu-family `p7zip-full` can be too old for newer APFS DMGs. `install-deps.sh` bootstraps `7zz` into `~/.local/bin` (set `SEVENZIP_SYSTEM_INSTALL=1` to install to `/usr/local/bin` instead).
 
@@ -235,18 +234,18 @@ Ubuntu-family `p7zip-full` can be too old for newer APFS DMGs. `install-deps.sh`
 
 ```bash
 # Fedora 41+
-sudo dnf install nodejs npm python3 7zip curl unzip @development-tools
+sudo dnf install python3 7zip curl unzip @development-tools
 
 # Fedora < 41
-sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip
+sudo dnf install python3 p7zip p7zip-plugins curl unzip
 sudo dnf groupinstall 'Development Tools'
 
 # openSUSE
-sudo zypper install nodejs-default npm-default python3 p7zip-full curl unzip
+sudo zypper install python3 p7zip-full curl unzip
 sudo zypper install -t pattern devel_basis
 
 # Arch / Manjaro
-sudo pacman -S --needed nodejs npm python p7zip curl unzip zstd base-devel
+sudo pacman -S --needed python p7zip curl unzip zstd base-devel
 
 # Rust toolchain (any distro)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -303,7 +302,7 @@ Override the package version with `PACKAGE_VERSION=YYYY.MM.DD.HHMMSS+commitish .
 
 The packaging scripts only repackage what's already in `codex-app/`. They do not download or extract the DMG themselves.
 
-Native packages declare `nodejs (>= 20)` because the bundled update manager rebuilds future packages locally. They also pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` so the privileged install flow works out of the box.
+Native packages bundle the managed Node.js runtime used by the launcher, Browser Use, Codex CLI install/update flow, and local auto-update rebuilds. They do not hard-depend on distro `nodejs` / `npm`, so installs also work when Node.js comes from `nvm`, asdf, Volta, or the nodejs.org tarball. Packages still pull in `polkit` (or `policykit-1` on older Debian/Ubuntu) plus `pkexec` so the privileged install flow works out of the box.
 
 ### Updater service controls
 

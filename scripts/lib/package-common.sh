@@ -121,6 +121,7 @@ stage_common_package_files() {
 stage_update_builder_bundle() {
     local root="$1"
     local update_builder_root="$root/opt/$PACKAGE_NAME/update-builder"
+    local node_runtime_source="$APP_DIR/resources/node-runtime"
 
     mkdir -p \
         "$update_builder_root/scripts" \
@@ -169,6 +170,11 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/packaging/linux/codex-update-manager.prerm" "$update_builder_root/packaging/linux/codex-update-manager.prerm"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.postrm" "$update_builder_root/packaging/linux/codex-update-manager.postrm"
     cp "$REPO_DIR/assets/codex.png" "$update_builder_root/assets/codex.png"
+    if [ -d "$node_runtime_source" ]; then
+        cp -a "$node_runtime_source" "$update_builder_root/node-runtime"
+    else
+        error "Missing managed Node.js runtime: $node_runtime_source. Run ./install.sh first."
+    fi
 }
 
 write_launcher_stub() {
