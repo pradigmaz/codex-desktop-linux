@@ -420,8 +420,10 @@ runtime_body = source.split("trap cleanup_launcher EXIT", 1)[1].split("launch_el
 stop_body = source.split("stop_owned_webview_server() {", 1)[1].split("owned_webview_server_pid() {", 1)[0]
 adopt_body = source.split("adopt_existing_webview_server() {", 1)[1].split("ensure_webview_server() {", 1)[0]
 ensure_body = source.split("ensure_webview_server() {", 1)[1].split("wait_for_webview_server", 1)[0]
-if 'if RUNNING_APP_PID="$(find_running_app_pid)"; then' not in detect_body:
-    raise SystemExit("detect_warm_start must record a running app even when warm start is disabled")
+if 'RUNNING_APP_PID="$(find_running_app_pid)"' not in detect_body:
+    raise SystemExit("detect_warm_start must record a pid-file running app even when warm start is disabled")
+if '[ -S "$LAUNCH_ACTION_SOCKET" ] && RUNNING_APP_PID="$(discover_running_app_pid)"' not in detect_body:
+    raise SystemExit("detect_warm_start must only use the expensive running-app scan when the launch socket exists")
 if not re.search(r'if ! linux_setting_enabled "codex-linux-warm-start-enabled" 1; then.*?return 0', detect_body, re.S):
     raise SystemExit("detect_warm_start must not fail when warm start is disabled")
 if "preserving liveness marker for second-instance handoff" not in detect_body:
