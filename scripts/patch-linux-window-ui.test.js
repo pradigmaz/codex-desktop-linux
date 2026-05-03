@@ -144,6 +144,18 @@ test("adds the Linux quit guard when electron/path/fs requires are split across 
   assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
 });
 
+test("adds the Linux quit guard when only the Electron require is recognizable", () => {
+  const source =
+    "const e=require(`./app-session.js`);let t=require(`electron`);class WindowManager{}";
+
+  const patched = applyPatchTwice(applyLinuxQuitGuardPatch, source);
+
+  assert.match(patched, /^let codexLinuxQuitInProgress=!1/);
+  assert.match(patched, /codexLinuxMarkQuitInProgress=\(\)=>\{codexLinuxQuitInProgress=!0\}/);
+  assert.match(patched, /codexLinuxIsQuitInProgress=\(\)=>codexLinuxQuitInProgress===!0/);
+  assert.equal((patched.match(/codexLinuxQuitInProgress=!1/g) ?? []).length, 1);
+});
+
 test("adds Linux menu hiding next to Windows removeMenu calls", () => {
   const source = "process.platform===`win32`&&k.removeMenu(),k.on(`closed`,()=>{})";
   const patched = applyPatchTwice(applyLinuxMenuPatch, source);
