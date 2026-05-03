@@ -67,22 +67,7 @@ JS
 
 make_fake_app() {
     local app_dir="$1"
-    mkdir -p "$app_dir/resources/node-runtime/bin"
-    cat > "$app_dir/start.sh" <<'SCRIPT'
-#!/bin/bash
-exit 0
-SCRIPT
-    chmod +x "$app_dir/start.sh"
-    for binary in node npm npx; do
-        cat > "$app_dir/resources/node-runtime/bin/$binary" <<'SCRIPT'
-#!/bin/bash
-case "$(basename "$0")" in
-    node) echo v22.22.2 ;;
-    *) echo 10.9.7 ;;
-esac
-SCRIPT
-        chmod +x "$app_dir/resources/node-runtime/bin/$binary"
-    done
+    "$REPO_DIR/tests/fixtures/create-packaged-app-fixture.sh" "$app_dir"
 }
 
 make_stub_bin_dir() {
@@ -562,6 +547,8 @@ PY
     assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "optional override for the bundled managed Node.js runtime"
     assert_contains "$REPO_DIR/scripts/lib/node-runtime.sh" "MANAGED_NODE_VERSION"
     assert_contains "$REPO_DIR/scripts/lib/package-common.sh" "node-runtime"
+    assert_contains "$REPO_DIR/tests/fixtures/create-packaged-app-fixture.sh" "resources/node-runtime/bin"
+    assert_contains "$REPO_DIR/.github/workflows/ci.yml" "tests/fixtures/create-packaged-app-fixture.sh codex-app"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "MANAGED_NODE_BIN_DIR"
     assert_contains "$REPO_DIR/updater/src/builder.rs" "managed_node_bin_dirs"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
