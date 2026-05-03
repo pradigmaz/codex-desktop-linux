@@ -28,6 +28,32 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Linux Computer Use | ⚠️ opt-in | Linux Computer Use backend with screen capture, accessibility, and input synthesis. The MCP server registers by default; the in-app UI surface is enabled at your discretion — see "Enabling Computer Use UI" below. Validated on Ubuntu/GNOME. |
 | Server-gated features (e.g. `gpt-5.5`) | 🟡 server-side | OpenAI rolls per-account, not project-controlled. Building a fresh package does not unlock these. |
 
+## Before you install
+
+Codex Desktop **does not bundle Node.js**. You need Node installed on your system before any of the native packages will work end-to-end:
+
+- **Node.js 20+** with `npm` and `npx` — required. Used to bootstrap/update the Codex CLI from the launcher and to rebuild future packages through the in-app auto-updater. Without it, `apt install codex-desktop` (or the rpm/pacman equivalents) will install, but the launcher's CLI auto-install and the in-app updater path will both fail.
+- **Node.js 22.22+** — required for the in-app **Browser Use** feature. Older Node will install fine but Browser Use will refuse to start.
+
+Install before proceeding:
+
+```bash
+# Debian / Ubuntu / Pop!_OS / Mint
+sudo apt install nodejs npm
+
+# Fedora / RHEL family
+sudo dnf install nodejs npm
+
+# Arch / Manjaro
+sudo pacman -S nodejs npm
+
+# Or via nvm (recommended for Browser Use — pins Node 22.22+):
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+nvm install 22
+```
+
+If you already have nvm's Node ≥22.22 in `PATH` for your interactive shell, the launcher will pick it up automatically.
+
 ## Quick install
 
 The fastest path: install deps, build the local app, build the native package, install it.
