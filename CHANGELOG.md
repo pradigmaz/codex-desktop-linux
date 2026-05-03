@@ -10,12 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Linux Computer Use plugin now exposes accessibility actions and editable-value setting via a new `perform_action` MCP tool. `element_index` selections resolve back to cached AT-SPI object references so actions and value writes target the same node as a click.
 - UI-driven Linux app update flow: when an update is rebuilt and ready, the in-app updater control can request install. The app exits, the user service installs the package, and the launcher relaunches `/usr/bin/codex-desktop` after the update lands. Backed by a new `codex-update-manager install-ready` subcommand and a `scripts/rebuild-candidate.sh` helper packaged into the update-builder bundle.
 - NixOS launcher exposes Electron GL/EGL libraries and primary-runtime native libraries via `LD_LIBRARY_PATH`, so the bundled Python/Node payloads (Pillow, NumPy, sharp, canvas) load on stock NixOS.
+- The installer now bundles a managed Linux Node.js 22.22 runtime into `codex-app/resources/node-runtime`; packaged launches and local auto-update rebuilds use it before any system, nvm, asdf, or manually installed Node.js.
 
 ### Changed
 
 - `get_app_state(window_id=...)` and `get_app_state(pid=...)` prefer exact PID/window-root matching when resolving the AT-SPI tree.
 - `click(element_index=...)` falls back to the primary AT-SPI action when the element exposes no usable bounds.
 - `app.asar` repack is now reproducible: file ordering is sorted and `node-pty/build/Makefile` (which embeds absolute build paths) is removed before packing.
+- Native packages no longer hard-depend on distro `nodejs`/`npm`; the bundled managed Node.js runtime covers Codex CLI install/update flows, Browser Use, and updater rebuilds. This lets users with `nvm`, asdf, Volta, or nodejs.org tarball installs install the native package cleanly. Fixes #104.
 
 ### Fixed
 

@@ -67,12 +67,22 @@ JS
 
 make_fake_app() {
     local app_dir="$1"
-    mkdir -p "$app_dir"
+    mkdir -p "$app_dir/resources/node-runtime/bin"
     cat > "$app_dir/start.sh" <<'SCRIPT'
 #!/bin/bash
 exit 0
 SCRIPT
     chmod +x "$app_dir/start.sh"
+    for binary in node npm npx; do
+        cat > "$app_dir/resources/node-runtime/bin/$binary" <<'SCRIPT'
+#!/bin/bash
+case "$(basename "$0")" in
+    node) echo v22.22.2 ;;
+    *) echo 10.9.7 ;;
+esac
+SCRIPT
+        chmod +x "$app_dir/resources/node-runtime/bin/$binary"
+    done
 }
 
 make_stub_bin_dir() {
@@ -141,11 +151,13 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/linux-update-bridge-patch.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/patch-report.js"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/rebuild-report.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/node-runtime/bin/node"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/updater/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
 }
 
 test_deb_builder_respects_package_identity() {
@@ -380,6 +392,45 @@ PLIST
     [ "$(tail -n 1 "$output_log")" = "41.3.0" ] || fail "Expected fallback Electron version 41.3.0, got: $(cat "$output_log")"
 }
 
+test_managed_node_runtime_source_install() {
+    info "Checking managed Node.js runtime source install"
+    local workspace="$TMP_DIR/managed-node-runtime"
+    local source_dir="$workspace/source"
+    local install_dir="$workspace/install"
+
+    mkdir -p "$source_dir/bin" "$install_dir/resources"
+    for binary in node npm npx; do
+        cat > "$source_dir/bin/$binary" <<'SCRIPT'
+#!/bin/bash
+case "$(basename "$0")" in
+    node) echo v22.22.2 ;;
+    *) echo 10.9.7 ;;
+esac
+SCRIPT
+        chmod +x "$source_dir/bin/$binary"
+    done
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        WORK_DIR="$workspace/work"
+        ARCH="x86_64"
+        CODEX_MANAGED_NODE_SOURCE="$source_dir"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/node-runtime.sh"
+        ensure_managed_node_runtime "$install_dir/resources/node-runtime"
+        command -v node
+        node -v
+    ) > "$workspace/output.log" 2>&1
+
+    assert_file_exists "$install_dir/resources/node-runtime/bin/node"
+    assert_contains "$workspace/output.log" "$install_dir/resources/node-runtime/bin/node"
+    assert_contains "$workspace/output.log" "v22.22.2"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -503,9 +554,16 @@ PY
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "/etc/apt/keyrings/nodesource.gpg"
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "signed-by="
     assert_contains "$REPO_DIR/scripts/install-deps.sh" "https://deb.nodesource.com/node_"
-    assert_contains "$REPO_DIR/packaging/linux/control" "nodejs (>= 20)"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "nodejs >= 20"
-    assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "nodejs>=20"
+    assert_not_contains "$REPO_DIR/packaging/linux/control" "Depends:.*nodejs"
+    assert_not_contains "$REPO_DIR/packaging/linux/control" "Depends:.*npm"
+    assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*nodejs"
+    assert_not_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "Requires:.*npm"
+    assert_not_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "'nodejs>=20'"
+    assert_contains "$REPO_DIR/packaging/linux/PKGBUILD.template" "optional override for the bundled managed Node.js runtime"
+    assert_contains "$REPO_DIR/scripts/lib/node-runtime.sh" "MANAGED_NODE_VERSION"
+    assert_contains "$REPO_DIR/scripts/lib/package-common.sh" "node-runtime"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "MANAGED_NODE_BIN_DIR"
+    assert_contains "$REPO_DIR/updater/src/builder.rs" "managed_node_bin_dirs"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "PACKAGED_RUNTIME_SOURCE"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT"
@@ -1664,6 +1722,7 @@ main() {
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
+    test_managed_node_runtime_source_install
     test_browser_use_node_repl_fallback_runtime
     test_launcher_template_sanity
     test_side_by_side_launcher_identity
