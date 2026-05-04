@@ -122,6 +122,7 @@ pub async fn build_update(
         dmg_path: Some(dmg_path.to_path_buf()),
         workspace_dir: Some(workspace.workspace_dir.clone()),
         package_path: Some(package_path.clone()),
+        rollback_package_path: state.artifact_paths.rollback_package_path.clone(),
     };
     state.save(&paths.state_file)?;
     info!(candidate_version, package = %package_path.display(), "local update build ready");

@@ -171,6 +171,16 @@ sed -n '1,160p' ~/.local/state/codex-update-manager/state.json
 sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 ```
 
+If a rebuilt update installs but the previous retained package was better, close
+Codex Desktop and run:
+
+```bash
+codex-update-manager rollback
+```
+
+Rollback uses the last retained known-good package and refuses to run when no
+rollback package is available.
+
 Runtime files live in standard XDG locations:
 
 ```text
