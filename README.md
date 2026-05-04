@@ -411,7 +411,7 @@ pacman -Qlp dist/codex-desktop-*.pkg.tar.zst | sed -n '1,40p'
 
 ## Versioning
 
-`codex-update-manager` current crate version: `0.6.2`
+`codex-update-manager` current crate version: `0.7.0`
 
 SemVer policy:
 

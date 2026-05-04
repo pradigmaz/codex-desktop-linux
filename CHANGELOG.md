@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-04
+
 ### Added
 
 - Linux Computer Use plugin now exposes accessibility actions and editable-value setting via a new `perform_action` MCP tool. `element_index` selections resolve back to cached AT-SPI object references so actions and value writes target the same node as a click.
@@ -25,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Linux quit now bypasses the close-to-tray gate so the app actually exits instead of getting trapped in the tray.
 - Keybinds settings index patch tolerates upstream minified variable-name drift; the route map is detected via a `(0,X.lazy)` lookahead instead of hard-coded `c_e` / `Xge` / `Zge` names.
 - NixOS-installed `start.sh` shebang is patched to a nix-store `bash` so the launcher actually runs on systems without `/bin/bash`.
+- Native packages now always stage `scripts/lib/node-runtime.sh` into `/opt/codex-desktop/update-builder`, so local auto-update rebuilds can source the managed Node runtime helper instead of failing before package generation.
 
 ## [0.6.2] - 2026-05-01
 
