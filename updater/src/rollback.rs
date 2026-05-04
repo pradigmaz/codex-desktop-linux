@@ -87,12 +87,12 @@ async fn trigger_rollback(
     let status = output.status;
 
     if status.success() {
-        state.status = UpdateStatus::Installed;
-        state.installed_version = install::installed_package_version();
-        state.candidate_version = None;
-        state.rollback_blocked_candidate_version = blocked_candidate;
-        state.error_message = None;
-        state.notified_events.clear();
+        apply_successful_rollback_state(
+            state,
+            install::installed_package_version(),
+            package_path,
+            blocked_candidate,
+        );
         state.save(&paths.state_file)?;
         println!("Rolled back Codex Desktop to {}.", state.installed_version);
         return Ok(());
@@ -129,6 +129,23 @@ fn summarize_command_output(output: &[u8]) -> Option<String> {
     } else {
         Some(text)
     }
+}
+
+fn apply_successful_rollback_state(
+    state: &mut PersistedState,
+    installed_version: String,
+    package_path: &Path,
+    blocked_candidate: Option<String>,
+) {
+    state.status = UpdateStatus::Installed;
+    state.installed_version = installed_version.clone();
+    state.candidate_version = None;
+    state.artifact_paths.package_path = Some(package_path.to_path_buf());
+    state.artifact_paths.rollback_package_path = Some(package_path.to_path_buf());
+    state.last_known_good_version = Some(installed_version);
+    state.rollback_blocked_candidate_version = blocked_candidate;
+    state.error_message = None;
+    state.notified_events.clear();
 }
 
 #[cfg(test)]
@@ -192,6 +209,53 @@ mod tests {
 
         assert_eq!(state.last_known_good_version, None);
         assert_eq!(state.artifact_paths.rollback_package_path, None);
+        Ok(())
+    }
+
+    #[test]
+    fn successful_rollback_repoints_package_paths_to_installed_package() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let update_path = temp.path().join("candidate.rpm");
+        let rollback_path = temp.path().join("known-good.rpm");
+        std::fs::write(&update_path, b"new")?;
+        std::fs::write(&rollback_path, b"old")?;
+
+        let mut state = PersistedState::new(true);
+        state.installed_version = "2026.05.04.131500".to_string();
+        state.candidate_version = Some("2026.05.04.131500+badcafe0".to_string());
+        state.status = UpdateStatus::Installing;
+        state.artifact_paths = ArtifactPaths {
+            dmg_path: None,
+            workspace_dir: None,
+            package_path: Some(update_path),
+            rollback_package_path: Some(rollback_path.clone()),
+        };
+
+        apply_successful_rollback_state(
+            &mut state,
+            "2026.05.02.120000".to_string(),
+            &rollback_path,
+            Some("2026.05.04.131500".to_string()),
+        );
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(
+            state.artifact_paths.package_path.as_deref(),
+            Some(rollback_path.as_path())
+        );
+        assert_eq!(
+            state.artifact_paths.rollback_package_path.as_deref(),
+            Some(rollback_path.as_path())
+        );
+        assert_eq!(
+            state.last_known_good_version.as_deref(),
+            Some("2026.05.02.120000")
+        );
+        assert_eq!(
+            state.rollback_blocked_candidate_version.as_deref(),
+            Some("2026.05.04.131500")
+        );
         Ok(())
     }
 }
