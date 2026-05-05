@@ -578,6 +578,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             bundle_root.join("scripts/lib/package-common.sh"),
             b"#!/bin/bash\n",
         )?;
+        fs::write(
+            bundle_root.join("scripts/lib/node-runtime.sh"),
+            b"#!/bin/bash\n",
+        )?;
 
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -618,6 +622,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             .workspace_dir
             .join("builder/scripts/rebuild-candidate.sh")
             .exists());
+        assert!(artifacts
+            .workspace_dir
+            .join("builder/scripts/lib/node-runtime.sh")
+            .exists());
         assert!(
             is_native_package_file(&artifacts.package_path),
             "expected a native package (.deb, .rpm, or .pkg.tar.zst), got {}",
@@ -652,6 +660,10 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
             b"#!/bin/bash\n",
         )?;
         fs::write(
+            source_root.join("scripts/lib/node-runtime.sh"),
+            b"#!/bin/bash\n",
+        )?;
+        fs::write(
             source_root.join("packaging/linux/control"),
             b"Package: codex\n",
         )?;
@@ -671,6 +683,9 @@ chmod +x "${CODEX_INSTALL_DIR}/start.sh"
         assert!(destination_root.join("updater").exists());
         assert!(destination_root
             .join("plugins/openai-bundled/plugins/computer-use/.mcp.json")
+            .exists());
+        assert!(destination_root
+            .join("scripts/lib/node-runtime.sh")
             .exists());
         assert!(!destination_root.join("scripts/build-rpm.sh").exists());
         assert!(!destination_root.join("scripts/build-pacman.sh").exists());
