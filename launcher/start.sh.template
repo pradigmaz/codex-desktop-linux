@@ -112,8 +112,13 @@ import_graphical_env_entry() {
 
     [ "$entry" != "$name" ] || return 0
 
+    # SOMMELIER_VERSION / SOMMELIER_VM_IDENTIFIER are imported here so the
+    # ChromeOS / Crostini auto-X11 fallback in set_electron_defaults sees
+    # them on app-launcher paths where they may only be present in the
+    # systemd --user manager environment (and not in the spawned process's
+    # initial env).
     case "$name" in
-        DISPLAY|WAYLAND_DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DESKTOP_SESSION|XAUTHORITY)
+        DISPLAY|WAYLAND_DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DESKTOP_SESSION|XAUTHORITY|SOMMELIER_VERSION|SOMMELIER_VM_IDENTIFIER)
             if [ -z "${!name:-}" ]; then
                 export "$entry"
             fi
@@ -174,6 +179,16 @@ discover_graphical_env_from_processes() {
 
 hydrate_graphical_session_env() {
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        # Display vars are already present, but the ChromeOS / Crostini
+        # auto-X11 fallback in set_electron_defaults also needs
+        # SOMMELIER_VERSION. On some app-launcher paths the spawned
+        # process inherits DISPLAY / WAYLAND_DISPLAY but not the Sommelier
+        # markers (those live only in the systemd --user manager env). Try
+        # one user-manager import in that case so the whitelisted
+        # SOMMELIER_VERSION / SOMMELIER_VM_IDENTIFIER get hydrated.
+        if [ -z "${SOMMELIER_VERSION:-}" ]; then
+            import_graphical_env_from_systemd_user >/dev/null 2>&1 || true
+        fi
         return 0
     fi
 
@@ -1033,6 +1048,27 @@ set_electron_defaults() {
         esac
         shift
     done
+
+    # ChromeOS / Crostini (Sommelier) auto-fallback to X11.
+    #
+    # On a Crostini Linux container the default Wayland session is provided by
+    # Sommelier (see SOMMELIER_VERSION/SOMMELIER_VM_IDENTIFIER, exported by
+    # cros-garcon for both terminal and app-menu launches). With the default
+    # Electron path (--ozone-platform-hint=auto) Electron picks the Wayland
+    # backend, reaches `window ready-to-show`, but the window never surfaces in
+    # the ChromeOS shell — leaving the launcher icon spinning indefinitely with
+    # no visible app. Forcing X11 (proxied by sommelier-x to ChromeOS) is the
+    # documented workaround. Skip this only when the operator explicitly chose
+    # a platform via --x11 / --wayland / --ozone-platform=*.
+    #
+    # See https://github.com/ilysenko/codex-desktop-linux/issues/95.
+    if [ -z "$ELECTRON_OZONE_PLATFORM" ] \
+        && [ "$ELECTRON_OZONE_HINT" = "auto" ] \
+        && [ -n "${SOMMELIER_VERSION:-}" ]; then
+        ELECTRON_OZONE_PLATFORM="x11"
+        ELECTRON_OZONE_HINT=""
+        echo "Detected Sommelier (SOMMELIER_VERSION=$SOMMELIER_VERSION); forcing --ozone-platform=x11 (Wayland windows are not visible under ChromeOS Crostini)"
+    fi
 }
 
 build_electron_launch_args() {
