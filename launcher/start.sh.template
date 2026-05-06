@@ -112,8 +112,13 @@ import_graphical_env_entry() {
 
     [ "$entry" != "$name" ] || return 0
 
+    # SOMMELIER_VERSION / SOMMELIER_VM_IDENTIFIER are imported here so the
+    # ChromeOS / Crostini auto-X11 fallback in set_electron_defaults sees
+    # them on app-launcher paths where they may only be present in the
+    # systemd --user manager environment (and not in the spawned process's
+    # initial env).
     case "$name" in
-        DISPLAY|WAYLAND_DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DESKTOP_SESSION|XAUTHORITY)
+        DISPLAY|WAYLAND_DISPLAY|XDG_SESSION_TYPE|XDG_CURRENT_DESKTOP|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|DESKTOP_SESSION|XAUTHORITY|SOMMELIER_VERSION|SOMMELIER_VM_IDENTIFIER)
             if [ -z "${!name:-}" ]; then
                 export "$entry"
             fi
