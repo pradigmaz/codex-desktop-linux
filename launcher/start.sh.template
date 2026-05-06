@@ -179,6 +179,16 @@ discover_graphical_env_from_processes() {
 
 hydrate_graphical_session_env() {
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        # Display vars are already present, but the ChromeOS / Crostini
+        # auto-X11 fallback in set_electron_defaults also needs
+        # SOMMELIER_VERSION. On some app-launcher paths the spawned
+        # process inherits DISPLAY / WAYLAND_DISPLAY but not the Sommelier
+        # markers (those live only in the systemd --user manager env). Try
+        # one user-manager import in that case so the whitelisted
+        # SOMMELIER_VERSION / SOMMELIER_VM_IDENTIFIER get hydrated.
+        if [ -z "${SOMMELIER_VERSION:-}" ]; then
+            import_graphical_env_from_systemd_user >/dev/null 2>&1 || true
+        fi
         return 0
     fi
 
