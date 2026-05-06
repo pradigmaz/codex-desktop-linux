@@ -158,9 +158,14 @@ ensure_nodejs_compatible() {
         return
     fi
 
+    if [ "$distro" = "dnf5" ]; then
+        info "Skipping system Node.js check; install.sh provides the managed Node.js runtime"
+        return
+    fi
+
     if [ "$distro" != "apt" ]; then
         error "Node.js ${MIN_NODE_MAJOR}+ with npm and npx is required$(current_node_version_suffix).
-Install a supported Node.js version for this distro, then re-run this script."
+Install a supported Node.js version for this distro, or use install.sh to download the managed runtime, then re-run this script."
     fi
 
     warn "Node.js ${MIN_NODE_MAJOR}+ with npm and npx is required$(current_node_version_suffix)"
@@ -230,8 +235,7 @@ install_dnf5() {
     info "Detected Fedora 41+ (dnf5)"
     # dnf5: 7zip provides /usr/bin/7z; @development-tools is the group syntax
     sudo dnf install -y \
-        nodejs npm python3 \
-        7zip curl unzip \
+        python3 7zip curl unzip \
         @development-tools
 }
 
@@ -402,7 +406,7 @@ case "$DISTRO" in
         error "Unsupported package manager. Install manually:
   # Debian/Ubuntu: install Node.js 20+ with npm/npx from NodeSource, nvm, or another compatible source, then:
   sudo apt install python3 p7zip-full curl unzip build-essential                   # Debian/Ubuntu
-  sudo dnf install nodejs npm python3 7zip curl unzip @development-tools            # Fedora 41+ (dnf5)
+  sudo dnf install python3 7zip curl unzip @development-tools                       # Fedora 41+ (dnf5)
   sudo dnf install nodejs npm python3 p7zip p7zip-plugins curl unzip                # Fedora <41 (dnf)
     && sudo dnf groupinstall 'Development Tools'
   sudo pacman -S nodejs npm python p7zip curl unzip zstd base-devel                 # Arch

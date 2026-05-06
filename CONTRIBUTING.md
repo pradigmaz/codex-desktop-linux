@@ -66,7 +66,6 @@ bash scripts/install-deps.sh
 
 This project requires:
 
-- Node.js 20+ with `npm` and `npx`
 - `python3`
 - `7z` or `7zz`
 - `curl`
@@ -74,6 +73,8 @@ This project requires:
 - `make`
 - `g++`
 - Rust toolchain with `cargo`
+
+`install.sh` downloads a managed Node.js runtime for the build and packaged app. A system Node.js install is optional user tooling.
 
 If you are working on apt-based systems, prefer the bootstrap path in `scripts/install-deps.sh` so you get a compatible Node.js version.
 
