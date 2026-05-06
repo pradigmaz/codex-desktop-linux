@@ -587,6 +587,21 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxAppSunsetPatch(currentSource) {
+  const disabledGateNeedle = "if(ms(`2929582856`)){";
+  const disabledGatePatch = "if(!1&&ms(`2929582856`)){";
+
+  if (currentSource.includes(disabledGatePatch)) {
+    return currentSource;
+  }
+
+  if (!currentSource.includes(disabledGateNeedle)) {
+    return currentSource;
+  }
+
+  return currentSource.replace(disabledGateNeedle, disabledGatePatch);
+}
+
 function requireName(source, moduleName) {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\(\`${escaped}\`\\)`));
@@ -1852,6 +1867,11 @@ function patchExtractedApp(extractedDir, options = {}) {
 
   for (const [name, pattern, warning] of [
     [
+      "linux-app-sunset-gate",
+      /^index-.*\.js$/,
+      `WARN: Could not find webview index bundle in ${path.join(extractedDir, "webview", "assets")} — skipping app sunset gate patch`,
+    ],
+    [
       "opaque-window-default-code-theme",
       /^code-theme-.*\.js$/,
       `WARN: Could not find code theme bundle in ${path.join(extractedDir, "webview", "assets")} — skipping translucent sidebar default patch`,
@@ -1872,8 +1892,11 @@ function patchExtractedApp(extractedDir, options = {}) {
       `WARN: Could not find resolved theme bundle in ${path.join(extractedDir, "webview", "assets")} — skipping translucent sidebar default patch`,
     ],
   ]) {
+    const patchFn = name === "linux-app-sunset-gate"
+      ? applyLinuxAppSunsetPatch
+      : applyLinuxOpaqueWindowsDefaultPatch;
     const { value: result, warnings } = captureWarnings(() =>
-      patchAssetFiles(extractedDir, pattern, applyLinuxOpaqueWindowsDefaultPatch, warning),
+      patchAssetFiles(extractedDir, pattern, patchFn, warning),
     );
     recordAssetPatch(report, name, result, warnings);
   }
@@ -1996,6 +2019,7 @@ module.exports = {
   isComputerUseUiEnabled,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
+  applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxSetIconPatch,

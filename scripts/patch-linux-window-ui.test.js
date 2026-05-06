@@ -23,6 +23,7 @@ const {
   applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
+  applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxSetIconPatch,
   applyLinuxSingleInstancePatch,
@@ -112,6 +113,13 @@ function keybindsIndexBundleFixture() {
     "Jge=[{key:`app`,heading:H7.appHeading,slugs:[`general-settings`,`appearance`,`connections`,`git-settings`,`usage`]}];",
     "switch(e){case`appearance`:case`git-settings`:case`worktrees`:case`local-environments`:case`data-controls`:case`environments`:return l===`electron`;}",
     "switch(e){case`usage`:k=g;break bb0;case`appearance`:case`general-settings`:case`agent`:case`git-settings`:case`account`:case`data-controls`:case`personalization`:k=!1;break bb0;}",
+  ].join("");
+}
+
+function appSunsetBundleFixture() {
+  return [
+    "function IT(){return null}",
+    "function LT(e){let t=(0,Z.c)(3),{children:n}=e;if(ms(`2929582856`)){let e;return t[0]===Symbol.for(`react.memo_cache_sentinel`)?(e=(0,$.jsx)(IT,{}),t[0]=e):e=t[0],e}let r;return t[1]===n?r=t[2]:(r=(0,$.jsx)($.Fragment,{children:n}),t[1]=n,t[2]=r),r}",
   ].join("");
 }
 
@@ -463,6 +471,13 @@ test("adds Keybinds settings route after upstream minified variable drift", () =
   assert.match(patched, /case`keybinds`:return l===`electron`/);
   assert.match(patched, /case`keybinds`:k=!1;break bb0;/);
   assert.match(patched, /codexLinuxKeybindOverridesRuntime/);
+});
+
+test("disables the upstream app sunset gate in the Linux wrapper webview", () => {
+  const patched = applyPatchTwice(applyLinuxAppSunsetPatch, appSunsetBundleFixture());
+
+  assert.match(patched, /if\(!1&&ms\(`2929582856`\)\)\{/);
+  assert.doesNotMatch(patched, /if\(ms\(`2929582856`\)\)\{/);
 });
 
 test("adds Linux package updater behind the existing app updater manager", () => {
