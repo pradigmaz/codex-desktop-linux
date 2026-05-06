@@ -1,5 +1,7 @@
 # Codex Desktop for Linux
 
+Before opening a pull request, please read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 Unofficial Linux build of [OpenAI Codex Desktop](https://openai.com/codex/). The official Codex Desktop app is macOS-only — this project converts the upstream macOS `Codex.dmg` into a runnable Linux Electron app, ships native `.deb` / `.rpm` / `.pkg.tar.zst` packages plus a Nix flake, and includes a local auto-updater that rebuilds future Linux packages from newer upstream DMGs.
 
 ## Supported platforms
