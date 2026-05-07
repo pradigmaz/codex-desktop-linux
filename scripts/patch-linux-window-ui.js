@@ -587,6 +587,26 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxAppSunsetPatch(currentSource) {
+  const statsigKey = "2929582856";
+  const disabledGatePattern = /if\(!1&&([A-Za-z_$][\w$]*)\(`2929582856`\)\)\{/u;
+  const gatePattern = /if\(([A-Za-z_$][\w$]*)\(`2929582856`\)\)\{/u;
+
+  if (disabledGatePattern.test(currentSource)) {
+    return currentSource;
+  }
+
+  if (gatePattern.test(currentSource)) {
+    return currentSource.replace(gatePattern, "if(!1&&$1(`2929582856`)){");
+  }
+
+  if (currentSource.includes(statsigKey)) {
+    console.warn("WARN: Could not find app sunset gate needle — skipping Linux app sunset patch");
+  }
+
+  return currentSource;
+}
+
 function requireName(source, moduleName) {
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = source.match(new RegExp(`([A-Za-z_$][\\w$]*)=require\\(\`${escaped}\`\\)`));
@@ -1850,30 +1870,40 @@ function patchExtractedApp(extractedDir, options = {}) {
     );
   }
 
-  for (const [name, pattern, warning] of [
+  for (const [name, pattern, patchFn, warning] of [
+    [
+      "linux-app-sunset-gate",
+      /^index-.*\.js$/,
+      applyLinuxAppSunsetPatch,
+      `WARN: Could not find webview index bundle in ${path.join(extractedDir, "webview", "assets")} — skipping app sunset gate patch`,
+    ],
     [
       "opaque-window-default-code-theme",
       /^code-theme-.*\.js$/,
+      applyLinuxOpaqueWindowsDefaultPatch,
       `WARN: Could not find code theme bundle in ${path.join(extractedDir, "webview", "assets")} — skipping translucent sidebar default patch`,
     ],
     [
       "opaque-window-default-general-settings",
       /^general-settings-.*\.js$/,
+      applyLinuxOpaqueWindowsDefaultPatch,
       `WARN: Could not find general settings bundle in ${path.join(extractedDir, "webview", "assets")} — skipping translucent sidebar default patch`,
     ],
     [
       "opaque-window-default-webview-index",
       /^index-.*\.js$/,
+      applyLinuxOpaqueWindowsDefaultPatch,
       `WARN: Could not find webview index bundle in ${path.join(extractedDir, "webview", "assets")} — skipping translucent sidebar default patch`,
     ],
     [
       "opaque-window-default-resolved-theme",
       /^use-resolved-theme-variant-.*\.js$/,
+      applyLinuxOpaqueWindowsDefaultPatch,
       `WARN: Could not find resolved theme bundle in ${path.join(extractedDir, "webview", "assets")} — skipping translucent sidebar default patch`,
     ],
   ]) {
     const { value: result, warnings } = captureWarnings(() =>
-      patchAssetFiles(extractedDir, pattern, applyLinuxOpaqueWindowsDefaultPatch, warning),
+      patchAssetFiles(extractedDir, pattern, patchFn, warning),
     );
     recordAssetPatch(report, name, result, warnings);
   }
@@ -1996,6 +2026,7 @@ module.exports = {
   isComputerUseUiEnabled,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
+  applyLinuxAppSunsetPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxSetIconPatch,
