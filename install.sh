@@ -25,7 +25,6 @@ MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
 WORK_DIR="$(mktemp -d)"
 ARCH="$(uname -m)"
 ICON_SOURCE="$SCRIPT_DIR/assets/codex.png"
-PACKAGED_RUNTIME_SOURCE="$SCRIPT_DIR/packaging/linux/codex-packaged-runtime.sh"
 
 # ---- Source library helpers ----
 . "$SCRIPT_DIR/scripts/lib/install-helpers.sh"
@@ -43,7 +42,6 @@ create_start_script() {
     local quoted_app_id
     local quoted_app_display_name
     local quoted_webview_port
-    local packaged_runtime_target
     quoted_app_id="$(shell_quote "$CODEX_APP_ID")"
     quoted_app_display_name="$(shell_quote "$CODEX_APP_DISPLAY_NAME")"
     quoted_webview_port="$(shell_quote "$CODEX_WEBVIEW_PORT")"
@@ -65,14 +63,6 @@ SCRIPT
         cp "$ICON_SOURCE" "$INSTALL_DIR/.codex-linux/$CODEX_APP_ID.png"
     else
         warn "Notification icon not found at $ICON_SOURCE"
-    fi
-    packaged_runtime_target="$INSTALL_DIR/.codex-linux/codex-packaged-runtime.sh"
-    if [ -f "$PACKAGED_RUNTIME_SOURCE" ]; then
-        sed -e "s/codex-desktop/$CODEX_APP_ID/g" \
-            "$PACKAGED_RUNTIME_SOURCE" > "$packaged_runtime_target"
-        chmod 0644 "$packaged_runtime_target"
-    else
-        warn "Packaged runtime helper not found at $PACKAGED_RUNTIME_SOURCE"
     fi
     info "Start script created"
 }

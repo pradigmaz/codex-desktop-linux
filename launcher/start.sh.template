@@ -327,7 +327,7 @@ sync_browser_use_bundled_plugin_cache() {
     mkdir -p "$cache_parent"
 
     if cp -R "$source_plugin" "$tmp_plugin"; then
-        /usr/bin/find "$tmp_plugin" -type f -name '*:com.apple.*' -delete
+        find "$tmp_plugin" -type f -name '*:com.apple.*' -delete
         rm -rf "$cache_plugin"
         mv "$tmp_plugin" "$cache_plugin"
         echo "Browser Use plugin cache synced from bundled resources: $cache_plugin"
