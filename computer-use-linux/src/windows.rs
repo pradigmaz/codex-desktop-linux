@@ -587,7 +587,7 @@ struct HyprlandClient {
     #[serde(rename = "class")]
     class_name: Option<String>,
     title: Option<String>,
-    pid: Option<u32>,
+    pid: Option<i64>,
     xwayland: Option<bool>,
     #[serde(rename = "focusHistoryID")]
     focus_history_id: Option<i32>,
@@ -622,7 +622,7 @@ impl TryFrom<HyprlandClient> for WindowInfo {
             title: client.title,
             app_id: client.class_name.clone(),
             wm_class: client.class_name,
-            pid: client.pid,
+            pid: client.pid.and_then(|pid| u32::try_from(pid).ok()),
             bounds,
             workspace: client.workspace.and_then(|workspace| workspace.id),
             focused: client.focus_history_id == Some(0),
@@ -1079,12 +1079,25 @@ mod tests {
             "pid": 68986,
             "xwayland": false,
             "focusHistoryID": 0
+          },
+          {
+            "address": "0x559952c99aa0",
+            "mapped": true,
+            "hidden": false,
+            "at": [0, 0],
+            "size": [400, 300],
+            "workspace": {"id": 3, "name": "3"},
+            "class": "transient",
+            "title": "Transient",
+            "pid": -1,
+            "xwayland": false,
+            "focusHistoryID": 2
           }
         ]"#;
 
         let windows = parse_hyprland_clients(clients_json).unwrap();
 
-        assert_eq!(windows.len(), 2);
+        assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].window_id, 0x559952b6db60);
         assert_eq!(windows[0].app_id.as_deref(), Some("brave-browser"));
         assert_eq!(windows[0].wm_class.as_deref(), Some("brave-browser"));
@@ -1097,6 +1110,7 @@ mod tests {
         assert_eq!(windows[0].client_type.as_deref(), Some("wayland"));
         assert_eq!(windows[0].backend, HYPRLAND_BACKEND);
         assert!(windows[1].focused);
+        assert_eq!(windows[2].pid, None);
     }
 
     #[test]

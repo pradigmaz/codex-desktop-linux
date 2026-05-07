@@ -391,14 +391,6 @@ fn windowing_report() -> WindowingReport {
 }
 
 fn hyprland_windowing_check() -> Check {
-    let desktop = env::var("XDG_CURRENT_DESKTOP")
-        .or_else(|_| env::var("DESKTOP_SESSION"))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !desktop.contains("hyprland") {
-        return Check::fail("not a Hyprland session");
-    }
-
     match Command::new("hyprctl").args(["clients", "-j"]).output() {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
