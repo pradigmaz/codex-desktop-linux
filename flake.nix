@@ -22,7 +22,7 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-t/me1IpFLPuM/1gx3Q5mxmI1Z747ly5fLq85dR/9FS0=";
+          hash = "sha256-SIAJz9/Zm9BO7sH6LBVmEf2nXwRRCwOfYSB6+mrUQjo=";
         };
 
         electronLibs = with pkgs; [
